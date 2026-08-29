@@ -1,0 +1,638 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Goldmine</title>
+    <meta name="description" content="Goldmine finds businesses your customers already love and AI has never heard of." />
+    <meta property="og:title" content="Goldmine" />
+    <meta property="og:description" content="Goldmine finds businesses your customers already love and AI has never heard of." />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <style>
+      *, *::before, *::after {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      body {
+        background-color: #0B0B0C;
+        color: #F5F5F4;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        font-size: 16px;
+        line-height: 1.5;
+        min-height: 100vh;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+      }
+
+      .container {
+        max-width: 1080px;
+        margin: 0 auto;
+        padding-top: 96px;
+        padding-bottom: 96px;
+        padding-left: 24px;
+        padding-right: 24px;
+      }
+
+      .section {
+        margin-bottom: 64px;
+      }
+
+      .headline {
+        font-size: 64px;
+        font-weight: 600;
+        line-height: 1.05;
+        letter-spacing: -0.03em;
+        color: #F5F5F4;
+        margin-bottom: 20px;
+      }
+
+      .subhead {
+        font-size: 20px;
+        font-weight: 400;
+        line-height: 1.5;
+        color: #A1A1A6;
+        max-width: 620px;
+      }
+
+      .section-label {
+        font-size: 12px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: #A1A1A6;
+        margin-bottom: 16px;
+      }
+
+      .proof-card {
+        background-color: #141416;
+        border: 1px solid #26262A;
+        border-radius: 8px;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        width: 100%;
+      }
+
+      .proof-half {
+        padding: 32px;
+      }
+
+      .proof-half:first-child {
+        border-right: 1px solid #26262A;
+      }
+
+      .stat-number {
+        font-size: 56px;
+        font-weight: 600;
+        line-height: 1;
+        letter-spacing: -0.02em;
+        margin-bottom: 8px;
+      }
+
+      .stat-number.primary {
+        color: #F5F5F4;
+      }
+
+      .stat-number.negative {
+        color: #F87171;
+      }
+
+      .stat-muted {
+        font-size: 14px;
+        color: #A1A1A6;
+        margin-bottom: 8px;
+      }
+
+      .stat-positive {
+        font-size: 14px;
+        font-weight: 500;
+        color: #4ADE80;
+      }
+
+      .index-stats-line {
+        margin-top: 16px;
+        font-size: 14px;
+        color: #A1A1A6;
+        display: none;
+      }
+
+      .controls-row {
+        display: grid;
+        grid-template-columns: 1.2fr 1.5fr 2fr auto;
+        gap: 12px;
+        align-items: center;
+        width: 100%;
+      }
+
+      .input-field, .select-field {
+        background-color: #141416;
+        border: 1px solid #26262A;
+        border-radius: 6px;
+        color: #F5F5F4;
+        font-family: inherit;
+        font-size: 14px;
+        padding: 14px 16px;
+        width: 100%;
+        outline: none;
+        transition: border-color 0.15s ease;
+      }
+
+      .input-field:focus, .select-field:focus {
+        border-color: #A1A1A6;
+      }
+
+      .select-field {
+        appearance: none;
+        -webkit-appearance: none;
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23A1A1A6' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+        background-repeat: no-repeat;
+        background-position: right 14px center;
+        padding-right: 36px;
+        cursor: pointer;
+      }
+
+      .select-field option {
+        background-color: #141416;
+        color: #F5F5F4;
+      }
+
+      .btn-primary {
+        background-color: #E8B33A;
+        color: #0B0B0C;
+        border: none;
+        border-radius: 6px;
+        font-family: inherit;
+        font-size: 14px;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        padding: 14px 24px;
+        white-space: nowrap;
+        cursor: pointer;
+        transition: opacity 0.15s ease;
+      }
+
+      .btn-primary:hover {
+        opacity: 0.9;
+      }
+
+      .btn-primary:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+
+      /* Progress Panel */
+      .progress-container {
+        display: none;
+        background-color: #141416;
+        border: 1px solid #26262A;
+        border-radius: 8px;
+        padding: 32px;
+        margin-top: 32px;
+      }
+
+      .progress-list {
+        list-style: none;
+        display: flex;
+        flex-direction: column;
+        gap: 20px;
+      }
+
+      .progress-item {
+        display: flex;
+        align-items: flex-start;
+        font-size: 15px;
+        line-height: 1.4;
+        transition: color 0.2s ease;
+      }
+
+      .stage-icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 20px;
+        margin-right: 12px;
+        font-weight: 600;
+      }
+
+      /* State styles */
+      .stage-pending {
+        color: #52525B;
+      }
+
+      .stage-pending .stage-icon {
+        color: #3F3F46;
+      }
+
+      .stage-active {
+        color: #E8B33A;
+        font-weight: 500;
+      }
+
+      .stage-active .stage-icon {
+        color: #E8B33A;
+      }
+
+      .stage-completed {
+        color: #A1A1A6;
+      }
+
+      .stage-completed .stage-icon {
+        color: #A1A1A6;
+      }
+
+      .stage-not-implemented {
+        color: #52525B;
+        opacity: 0.55;
+      }
+
+      .stage-not-implemented .stage-icon {
+        color: transparent;
+      }
+
+      .stage-count {
+        margin-left: 8px;
+        font-weight: 600;
+      }
+
+      .stage-completed .stage-count {
+        color: #F5F5F4;
+      }
+
+      .stage-active .stage-count {
+        color: #E8B33A;
+      }
+
+      .results-summary {
+        margin-top: 24px;
+        padding-top: 20px;
+        border-top: 1px solid #26262A;
+        font-size: 15px;
+        font-weight: 500;
+        color: #F5F5F4;
+      }
+
+      .debug-panel {
+        background-color: #141416;
+        border: 1px solid #26262A;
+        border-radius: 8px;
+        margin-top: 32px;
+        overflow: hidden;
+      }
+
+      .debug-summary {
+        padding: 16px 20px;
+        font-size: 12px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: #A1A1A6;
+        cursor: pointer;
+        user-select: none;
+        outline: none;
+      }
+
+      .debug-summary:hover {
+        color: #F5F5F4;
+      }
+
+      .debug-content {
+        border-top: 1px solid #26262A;
+        padding: 16px 20px;
+      }
+
+      pre {
+        color: #F5F5F4;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 12px;
+        line-height: 1.5;
+        overflow-x: auto;
+        max-height: 480px;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+
+      @media (max-width: 900px) {
+        .headline {
+          font-size: 44px;
+        }
+
+        .controls-row {
+          grid-template-columns: 1fr;
+          gap: 12px;
+        }
+
+        .proof-card {
+          grid-template-columns: 1fr;
+        }
+
+        .proof-half:first-child {
+          border-right: none;
+          border-bottom: 1px solid #26262A;
+        }
+
+        .container {
+          padding-top: 56px;
+          padding-bottom: 56px;
+        }
+
+        .section {
+          margin-bottom: 48px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="container">
+      <!-- Section 1: Headline & Subhead -->
+      <section class="section" id="hero-section">
+        <h1 class="headline" id="main-headline">Find the businesses your agency is missing.</h1>
+        <p class="subhead" id="main-subhead">Goldmine finds businesses your customers already love and AI has never heard of.</p>
+      </section>
+
+      <!-- Section 2: Proof Card -->
+      <section class="section" id="proof-section">
+        <div class="proof-card" id="proof-card">
+          <div class="proof-half" id="proof-customer">
+            <div class="section-label">WHAT CUSTOMERS THINK</div>
+            <div class="stat-number primary">4.8</div>
+            <div class="stat-muted">612 reviews</div>
+            <div class="stat-positive">Top 6% of Hackney restaurants</div>
+          </div>
+          <div class="proof-half" id="proof-ai">
+            <div class="section-label">WHAT AI THINKS</div>
+            <div class="stat-number negative">2 / 10</div>
+            <div class="stat-muted">named in 2 of 10 searches customers actually make</div>
+            <div class="stat-muted">A 4.4-star competitor was named in 8</div>
+          </div>
+        </div>
+        <div id="indexStatsLine" class="index-stats-line"></div>
+      </section>
+
+      <!-- Section 3: Controls Row & Progress -->
+      <section class="section" id="controls-section">
+        <div class="controls-row">
+          <input
+            type="text"
+            id="locationInput"
+            class="input-field"
+            value="London"
+            placeholder="Location"
+            aria-label="Location"
+          />
+
+          <select id="categorySelect" class="select-field" aria-label="Category">
+            <option value="Restaurants and cafés" selected>Restaurants and cafés</option>
+            <option value="Bars and pubs">Bars and pubs</option>
+            <option value="Beauty and aesthetics">Beauty and aesthetics</option>
+            <option value="Hair">Hair</option>
+            <option value="Fitness">Fitness</option>
+            <option value="Dental">Dental</option>
+            <option value="Private healthcare">Private healthcare</option>
+            <option value="Veterinary">Veterinary</option>
+            <option value="Legal">Legal</option>
+            <option value="Accountancy">Accountancy</option>
+            <option value="Estate agencies">Estate agencies</option>
+            <option value="Retail">Retail</option>
+            <option value="Home services">Home services</option>
+            <option value="Automotive">Automotive</option>
+            <option value="Hospitality">Hospitality</option>
+          </select>
+
+          <input
+            type="text"
+            id="servicesInput"
+            class="input-field"
+            value="SEO, websites and AI visibility"
+            placeholder="Services"
+            aria-label="Services"
+          />
+
+          <button id="findGoldBtn" class="btn-primary" onclick="startFindGold()">
+            FIND GOLD
+          </button>
+        </div>
+
+        <!-- Live Progress Screen -->
+        <div id="progressContainer" class="progress-container">
+          <div class="section-label" id="progressTitle">LIVE PIPELINE EXECUTION</div>
+          <ul class="progress-list" id="progressList">
+            <li id="stage-discovering" class="progress-item stage-pending">
+              <span class="stage-icon">○</span>
+              <span class="stage-text">Discovering <span class="location-label">London</span> businesses...</span>
+              <span class="stage-count"></span>
+            </li>
+            <li id="stage-qualifying" class="progress-item stage-pending">
+              <span class="stage-icon">○</span>
+              <span class="stage-text">Evaluating business quality...</span>
+              <span class="stage-count"></span>
+            </li>
+            <li id="stage-auditing" class="progress-item stage-pending">
+              <span class="stage-icon">○</span>
+              <span class="stage-text">Auditing digital presence...</span>
+              <span class="stage-count"></span>
+            </li>
+            <li id="stage-testing" class="progress-item stage-pending">
+              <span class="stage-icon">○</span>
+              <span class="stage-text">Testing AI discoverability...</span>
+              <span class="stage-count"></span>
+            </li>
+            <li id="stage-comparing" class="progress-item stage-pending">
+              <span class="stage-icon">○</span>
+              <span class="stage-text">Comparing competitors...</span>
+              <span class="stage-count"></span>
+            </li>
+            <li id="stage-complete" class="progress-item stage-pending">
+              <span class="stage-icon">○</span>
+              <span class="stage-text">Finding gold...</span>
+              <span class="stage-count"></span>
+            </li>
+          </ul>
+
+          <div id="resultsSummary" class="results-summary" style="display: none;"></div>
+        </div>
+
+        <!-- Collapsed Debug Panel for Raw JSON -->
+        <details class="debug-panel" id="debugPanel">
+          <summary class="debug-summary">Raw Response (Debug Panel)</summary>
+          <div class="debug-content">
+            <pre id="jsonOutput">// Run document and results from /api/run/{run_id} will appear here...</pre>
+          </div>
+        </details>
+      </section>
+    </main>
+
+    <script>
+      let currentPollInterval = null;
+
+      // On load, fetch /api/index/stats
+      async function loadIndexStats() {
+        try {
+          const res = await fetch("/api/index/stats");
+          if (res.ok) {
+            const data = await res.json();
+            const total = data.total_businesses || 0;
+            const categories = data.category_count || 0;
+            const statsEl = document.getElementById("indexStatsLine");
+            if (total > 0) {
+              const catWord = categories === 1 ? "1 category" : `${categories} categories`;
+              statsEl.textContent = `${total.toLocaleString()} businesses indexed across ${catWord}.`;
+              statsEl.style.display = "block";
+            }
+          }
+        } catch (e) {
+          console.debug("Failed to load index stats", e);
+        }
+      }
+
+      loadIndexStats();
+
+      const STAGE_ORDER = ["discovering", "qualifying", "auditing", "testing", "comparing", "complete"];
+
+      async function startFindGold() {
+        if (currentPollInterval) {
+          clearInterval(currentPollInterval);
+          currentPollInterval = null;
+        }
+
+        const locationInput = document.getElementById("locationInput");
+        const categorySelect = document.getElementById("categorySelect");
+        const servicesInput = document.getElementById("servicesInput");
+        const findBtn = document.getElementById("findGoldBtn");
+        const progressContainer = document.getElementById("progressContainer");
+        const jsonOutput = document.getElementById("jsonOutput");
+        const resultsSummary = document.getElementById("resultsSummary");
+
+        const location = locationInput.value.trim() || "London";
+        const category = categorySelect.value.trim() || "Restaurants and cafés";
+        const services = servicesInput.value.trim() || "SEO, websites and AI visibility";
+
+        // Update location label in discovering stage
+        document.querySelectorAll(".location-label").forEach(el => el.textContent = location);
+
+        // Reset progress UI
+        resetProgressUI();
+        progressContainer.style.display = "block";
+        resultsSummary.style.display = "none";
+        findBtn.disabled = true;
+        findBtn.textContent = "FINDING...";
+
+        try {
+          const res = await fetch("/api/discover", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ category, location, services })
+          });
+
+          if (!res.ok) {
+            const errData = await res.json().catch(() => ({ detail: "Unknown error" }));
+            throw new Error(errData.detail || "Failed to start discovery");
+          }
+
+          const { run_id } = await res.json();
+          jsonOutput.textContent = JSON.stringify({ run_id, status: "started" }, null, 2);
+
+          // Poll /api/run/{run_id} every 500ms
+          currentPollInterval = setInterval(async () => {
+            try {
+              const runRes = await fetch("/api/run/" + run_id);
+              if (!runRes.ok) return;
+
+              const runDoc = await runRes.json();
+              jsonOutput.textContent = JSON.stringify(runDoc, null, 2);
+              updateProgressUI(runDoc, location);
+
+              if (runDoc.status === "complete" || runDoc.status === "error") {
+                clearInterval(currentPollInterval);
+                currentPollInterval = null;
+                findBtn.disabled = false;
+                findBtn.textContent = "FIND GOLD";
+                loadIndexStats();
+              }
+            } catch (err) {
+              console.error("Polling error:", err);
+            }
+          }, 500);
+
+        } catch (err) {
+          jsonOutput.textContent = String(err);
+          findBtn.disabled = false;
+          findBtn.textContent = "FIND GOLD";
+          alert("Error: " + err.message);
+        }
+      }
+
+      function resetProgressUI() {
+        STAGE_ORDER.forEach(stage => {
+          const item = document.getElementById("stage-" + stage);
+          if (item) {
+            item.className = "progress-item stage-pending";
+            item.querySelector(".stage-icon").textContent = "○";
+            item.querySelector(".stage-count").textContent = "";
+          }
+        });
+      }
+
+      function updateProgressUI(runDoc, location) {
+        const counts = runDoc.stage_counts || {};
+        const stageStatus = runDoc.stage_status || runDoc.stage_statuses || {};
+        const isComplete = runDoc.status === "complete";
+
+        STAGE_ORDER.forEach((s) => {
+          const item = document.getElementById("stage-" + s);
+          if (!item) return;
+
+          const icon = item.querySelector(".stage-icon");
+          const countSpan = item.querySelector(".stage-count");
+          const status = stageStatus[s] || "pending";
+
+          // Format count text ONLY if stage actually produced it
+          if (status === "done" && counts[s] !== undefined && counts[s] !== null) {
+            const c = counts[s];
+            if (s === "discovering") {
+              countSpan.textContent = `${c.toLocaleString()} candidates found`;
+            } else if (s === "qualifying") {
+              countSpan.textContent = `${c.toLocaleString()} strong businesses identified`;
+            } else if (s === "auditing") {
+              countSpan.textContent = `${c.toLocaleString()} opportunities detected`;
+            } else if (s === "testing") {
+              countSpan.textContent = `${c.toLocaleString()} businesses tested`;
+            } else if (s === "comparing") {
+              countSpan.textContent = "";
+            } else if (s === "complete") {
+              countSpan.textContent = `${c.toLocaleString()} high-confidence opportunities`;
+            }
+          } else {
+            countSpan.textContent = "";
+          }
+
+          if (status === "done") {
+            item.className = "progress-item stage-completed";
+            icon.textContent = "✓";
+          } else if (status === "running") {
+            item.className = "progress-item stage-active";
+            icon.textContent = "▶";
+          } else if (status === "not_implemented") {
+            item.className = "progress-item stage-not-implemented";
+            icon.innerHTML = "&emsp;";
+          } else {
+            // pending
+            item.className = "progress-item stage-pending";
+            icon.textContent = "○";
+          }
+        });
+
+        if (isComplete) {
+          const discovered = counts.discovering !== undefined ? counts.discovering : (runDoc.results ? runDoc.results.length : 0);
+          const qualified = counts.qualifying !== undefined ? counts.qualifying : (runDoc.results ? runDoc.results.length : 0);
+          const resultsSummary = document.getElementById("resultsSummary");
+          resultsSummary.style.display = "block";
+          resultsSummary.textContent = `Scan complete. ${discovered} discovered, ${qualified} qualified. Digital audit and AI visibility not yet run.`;
+        }
+      }
+    </script>
+  </body>
+</html>
