@@ -240,6 +240,25 @@ let firestoreAvailable = Boolean(firestore);
 let firestoreFailure: string | null = null;
 let nextFirestoreRetryAt = 0;
 const FIRESTORE_RETRY_DELAY_MS = 15_000;
+let runtimeServiceAccount: string | null = null;
+
+async function getRuntimeServiceAccount(): Promise<string | null> {
+  if (runtimeServiceAccount) return runtimeServiceAccount;
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 1_000);
+    const response = await fetch(
+      "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/email",
+      { headers: { "Metadata-Flavor": "Google" }, signal: controller.signal }
+    );
+    clearTimeout(timeout);
+    if (!response.ok) return null;
+    runtimeServiceAccount = (await response.text()).trim() || null;
+    return runtimeServiceAccount;
+  } catch {
+    return null;
+  }
+}
 
 function describeFirestoreFailure(error: unknown): string {
   const err = error as { code?: unknown; message?: unknown };
@@ -2149,6 +2168,7 @@ app.get("/api/health", async (req: Request, res: Response) => {
     model: MODEL,
     persistence: firestoreAvailable ? "firestore" : "local-fallback",
     firestore_failure: firestoreFailure,
+    runtime_service_account: await getRuntimeServiceAccount(),
   });
 });
 
