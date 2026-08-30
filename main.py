@@ -349,6 +349,33 @@ def normalize_place(p: Dict[str, Any], category: str, location: str) -> Dict[str
     }
 
 
+def compute_scores_python(b: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Scoring in Python:
+    site_health = mean(site.performance, site.seo), 0 when no_website.
+    visibility_score = round(0.7 * ai.visibility + 0.3 * site_health)
+    gold_score = round(quality.score * (100 - visibility_score) / 100)
+    """
+    site = b.get("site", {})
+    no_website = site.get("no_website", False) or not b.get("website")
+    if no_website:
+        site_health = 0.0
+    else:
+        perf = float(site.get("performance", 0) or 0)
+        seo = float(site.get("seo", 0) or 0)
+        site_health = (perf + seo) / 2.0
+
+    ai_vis = float(b.get("ai", {}).get("visibility", 0) or 0)
+    visibility_score = round(0.7 * ai_vis + 0.3 * site_health)
+    quality_score = float(b.get("quality", {}).get("score", 0) or 0)
+    gold_score = round(quality_score * (100 - visibility_score) / 100)
+
+    b["site_health"] = round(site_health)
+    b["visibility_score"] = visibility_score
+    b["gold_score"] = gold_score
+    return b
+
+
 def compute_quality_and_filter(businesses: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
     Quality, computed in Python, never asked of the model.
