@@ -261,12 +261,12 @@ function dbGetIndexStats() {
 // Time Estimates & Stage Durations
 // -------------------------------------------------------------
 const DEFAULT_STAGE_ESTIMATES: Record<string, number> = {
-  discovery: 6,
-  quality: 1,
-  audit: 35,
-  ai_visibility: 40,
-  competitors: 15,
-  scoring: 2,
+  discovery: 5,
+  quality: 0.5,
+  audit: 6,
+  ai_visibility: 10,
+  competitors: 2,
+  scoring: 1,
 };
 
 function computeMedian(numbers: number[], fallback: number): number {
@@ -1002,12 +1002,22 @@ function computeSinglePercentileRank(val: number, cohortValues: number[]): numbe
   return Number(pct.toFixed(1));
 }
 
+const competitorLookupCache = new Map<string, { name: string; rating: number; review_count: number; place_id?: string } | null>();
+
 async function fetchPlaceDetailsByName(
   name: string,
   location: string
 ): Promise<{ name: string; rating: number; review_count: number; place_id?: string } | null> {
+  const cacheKey = `${name.toLowerCase().trim()}__${location.toLowerCase().trim()}`;
+  if (competitorLookupCache.has(cacheKey)) {
+    return competitorLookupCache.get(cacheKey)!;
+  }
+
   const mapsApiKey = process.env.MAPS_API_KEY;
-  if (!mapsApiKey) return null;
+  if (!mapsApiKey) {
+    competitorLookupCache.set(cacheKey, null);
+    return null;
+  }
 
   const url = "https://places.googleapis.com/v1/places:searchText";
   const headers = {
@@ -1023,33 +1033,45 @@ async function fetchPlaceDetailsByName(
   };
 
   try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 4000);
+
     const resp = await fetch(url, {
       method: "POST",
       headers,
       body: JSON.stringify(payload),
+      signal: controller.signal,
     });
+    clearTimeout(timeoutId);
 
     if (!resp.ok) {
+      competitorLookupCache.set(cacheKey, null);
       return null;
     }
 
     const data: any = await resp.json();
     const p = data.places?.[0];
-    if (!p) return null;
+    if (!p) {
+      competitorLookupCache.set(cacheKey, null);
+      return null;
+    }
 
     const pName =
       typeof p.displayName === "object"
         ? String(p.displayName.text || "")
         : String(p.displayName || name);
 
-    return {
+    const resObj = {
       name: pName || name,
       rating: Number(p.rating || 0),
       review_count: Number(p.userRatingCount || 0),
       place_id: p.id,
     };
+    competitorLookupCache.set(cacheKey, resObj);
+    return resObj;
   } catch (err) {
     console.warn(`Error resolving competitor details for "${name}":`, err);
+    competitorLookupCache.set(cacheKey, null);
     return null;
   }
 }
