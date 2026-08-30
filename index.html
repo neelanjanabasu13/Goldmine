@@ -288,7 +288,7 @@
         <div class="agents">
           <div id="agentDiscovery" class="agent pending">
             <span class="name">Agent Discovery</span>
-            <span class="role">finding every business in the market</span>
+            <span class="role">collecting Google Places candidates</span>
             <span id="agentDiscoveryStatus" class="stat"></span>
           </div>
 
@@ -330,8 +330,9 @@
       <div id="viewResults" style="display: none;">
         <button class="btn btn-primary" id="btnBackToSearch" style="margin-bottom: 24px;">← Run another scan</button>
         <h1 id="resultsHeadline" style="font-size: clamp(28px, 4vw, 42px); margin-bottom: 24px;">
-          Goldmine found opportunities
+          Goldmine assessed candidates
         </h1>
+        <p id="resultsScope" style="margin: -12px 0 24px; color: var(--muted); font-size: 14px;"></p>
 
         <div class="results">
           <table>
@@ -846,7 +847,13 @@
         });
 
         document.getElementById("resultsHeadline").textContent =
-          `Goldmine found ${results.length} opportunities in ${category}, ${location}`;
+          `Goldmine assessed ${results.length} Google Places candidates in ${category}, ${location}`;
+
+        const discovery = runDoc.discovery || {};
+        const returned = Number(discovery.candidates_returned || runDoc.stage_counts?.discovering || results.length);
+        const source = discovery.source || "Google Places Text Search";
+        document.getElementById("resultsScope").textContent =
+          `${source} returned ${returned} candidates for this scan. This is a candidate cohort, not a complete market census or a Google search/ad ranking.`;
 
         const tbody = document.getElementById("resultsTableBody");
         tbody.innerHTML = "";
@@ -904,7 +911,9 @@
         document.getElementById("detailBizAddr").textContent = `${b.category || category} · ${b.address || locality}`;
 
         // Top Verdict Line
-        let verdictText = `Customers rank them in the top ${topPct}% of ${category.toLowerCase()} in ${locality}. `;
+        const cohortSize = Number(b.quality?.cohort_size || runDoc.discovery?.qualified_candidates || runDoc.stage_counts?.qualifying || 0);
+        const cohortLabel = cohortSize > 0 ? `${cohortSize} Google Places candidates` : "the Google Places candidate cohort";
+        let verdictText = `Their reputation score is in the top ${topPct}% of ${cohortLabel} returned for this scan — not a market-wide ranking. `;
         if (totalTested === 0) {
           verdictText += "AI visibility not measured for this business.";
         } else if (visibility === 0) {
@@ -1033,12 +1042,12 @@
           compCard.innerHTML = `
             <div class="versus">
               <div class="side them">
-                <div class="lab" style="color: var(--neg);">${escapeHtml(b.name)} (THIS PROSPECT)</div>
+                <div class="lab" style="color: var(--neg);">${escapeHtml(b.name)} (THIS CANDIDATE)</div>
                 <div style="font-family: 'Bricolage Grotesque', sans-serif; font-size: 20px; font-weight: 800; margin: 6px 0;">
                   ${b.rating || 0}★ <span style="font-size: 14px; font-weight: 400; color: var(--muted);">(${b.review_count || 0} reviews)</span>
                 </div>
                 <div style="font-size: 14px; color: var(--neg); font-weight: 500;">
-                  AI mentions: ${mentions} of ${totalTested || 10}
+                  AI mentions: ${totalTested > 0 ? `${mentions} of ${totalTested}` : "not measured"}
                 </div>
               </div>
               <div class="vs">VS</div>
@@ -1048,7 +1057,7 @@
                   ${comp.rating || 0}★ <span style="font-size: 14px; font-weight: 400; color: var(--muted);">(${comp.review_count || 0} reviews)</span>
                 </div>
                 <div style="font-size: 14px; color: var(--pos); font-weight: 500;">
-                  AI mentions: ${comp.appearances || 0} of ${comp.total_queries || totalTested || 10}
+                  AI mentions: ${totalTested > 0 ? `${comp.appearances || 0} of ${comp.total_queries || totalTested}` : "not measured"}
                 </div>
               </div>
             </div>

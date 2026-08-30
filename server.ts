@@ -1019,7 +1019,8 @@ function normalizePlace(p: any, category: string, location: string) {
     top_review: topReview,
     contact: null,
     value_estimate: null,
-    quality: { rating_pct: 0, volume_pct: 0, score: 0 },
+    quality: { rating_pct: 0, volume_pct: 0, score: 0, cohort_size: 0 },
+    discovery: null as any,
     site: {
       performance: 0,
       seo: 0,
@@ -1057,6 +1058,7 @@ function computeQualityAndFilter(businesses: any[]): any[] {
       rating_pct: rp,
       volume_pct: vp,
       score,
+      cohort_size: qualified.length,
     };
   }
 
@@ -1071,7 +1073,11 @@ function computeQualityAndFilter(businesses: any[]): any[] {
     return b.rating - a.rating;
   });
 
-  return qualified.slice(0, 20);
+  // Places Text Search is a candidate source, not a market census. Do not
+  // silently retain only the most reviewed twenty businesses: that biases the
+  // cohort towards already-dominant brands and makes market claims indefensible.
+  // The Places request itself is capped upstream.
+  return qualified;
 }
 
 function computeSinglePercentileRank(val: number, cohortValues: number[]): number {
@@ -1469,6 +1475,15 @@ async function runDiscoveryPipeline(
     const rawPlaces = await fetchPlacesPaginated(category, location, 3);
     const normalized = rawPlaces.map((p) => normalizePlace(p, category, location));
     const candidatesCount = normalized.length;
+    const discoveryQuery = `${category} in ${location}`;
+    for (const business of normalized) {
+      business.discovery = {
+        source: "Google Places Text Search",
+        query: discoveryQuery,
+        candidates_returned: candidatesCount,
+        market_coverage: "candidate_cohort_not_market_census",
+      };
+    }
     stageTimings.discovering = Number(((Date.now() - stageStart) / 1000).toFixed(2));
 
     // ---------------------------------------------------------
@@ -2020,6 +2035,13 @@ async function runDiscoveryPipeline(
       total_duration_sec: totalDurationSec,
       unmatched_names: unmatchedNamesList,
       resolved_competitors: resolvedCompetitors,
+      discovery: {
+        source: "Google Places Text Search",
+        query: discoveryQuery,
+        candidates_returned: candidatesCount,
+        qualified_candidates: qualifiedCount,
+        market_coverage: "candidate_cohort_not_market_census",
+      },
       results: top20,
       finished_at: new Date().toISOString(),
     });
@@ -2136,10 +2158,6 @@ app.get("/api/business/:placeId", (req: Request, res: Response) => {
     return;
   }
 
-  if (!hasMeasuredAiVisibility(business)) {
-    res.status(422).json({ error: "Outreach is unavailable because AI visibility was not measured for this business." });
-    return;
-  }
   res.json(business);
 });
 
@@ -2161,6 +2179,11 @@ app.post("/api/outreach/:placeId", async (req: Request, res: Response) => {
 
   if (!business) {
     res.status(404).json({ error: "Business not found" });
+    return;
+  }
+
+  if (!hasMeasuredAiVisibility(business)) {
+    res.status(422).json({ error: "Outreach is unavailable because AI visibility was not measured for this business." });
     return;
   }
 
@@ -2312,13 +2335,14 @@ app.get("/api/spotlight", (req: Request, res: Response) => {
   }
 
   const allBusinesses = Object.values(store.businesses);
-  if (allBusinesses.length === 0) {
-    res.status(404).json({ error: "No businesses found" });
+  const measuredBusinesses = allBusinesses.filter(hasMeasuredAiVisibility);
+  if (measuredBusinesses.length === 0) {
+    res.status(404).json({ error: "No business has a completed AI visibility measurement yet" });
     return;
   }
 
   // Sort descending by gold_score, then rating, then review_count
-  const sorted = [...allBusinesses].sort((a, b) => {
+  const sorted = [...measuredBusinesses].sort((a, b) => {
     const scoreDiff = (b.gold_score || 0) - (a.gold_score || 0);
     if (scoreDiff !== 0) return scoreDiff;
     const ratingDiff = (b.rating || 0) - (a.rating || 0);
