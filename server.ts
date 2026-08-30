@@ -18,8 +18,8 @@ const MODEL = process.env.GEMINI_MODEL || "gemini-3.7-flash";
 const FALLBACK_MODELS = [MODEL, "gemini-3.7-flash", "gemini-3.1-flash-lite", "gemini-flash-latest"];
 const CUSTOMER_QUERY_COUNT = 10;
 const GROUNDING_QUERY_CONCURRENCY = Math.max(1, Number(process.env.GROUNDING_QUERY_CONCURRENCY || 8));
-const GROUNDING_QUERY_TIMEOUT_MS = Math.max(1_000, Number(process.env.GROUNDING_QUERY_TIMEOUT_MS || 20_000));
-const VISIBILITY_STAGE_TIMEOUT_MS = Math.max(1_000, Number(process.env.VISIBILITY_STAGE_TIMEOUT_MS || 90_000));
+const GROUNDING_QUERY_TIMEOUT_MS = Math.max(1_000, Number(process.env.GROUNDING_QUERY_TIMEOUT_MS || 18_000));
+const VISIBILITY_STAGE_TIMEOUT_MS = Math.max(1_000, Number(process.env.VISIBILITY_STAGE_TIMEOUT_MS || 55_000));
 const QUERY_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
 const firestoreProject = process.env.GOOGLE_CLOUD_PROJECT || process.env.GCLOUD_PROJECT;
 const firestore = firestoreProject ? new Firestore({ projectId: firestoreProject }) : null;
@@ -1331,6 +1331,34 @@ function extractBusinessesFromGroundingText(rawText: string): Array<{ name: stri
   return extracted;
 }
 
+function parseGroundedBatch(
+  rawText: string,
+  requestedQueries: string[]
+): Map<string, { answer_text: string; named_list: Array<{ name: string; rank: number }> }> {
+  const results = new Map<string, { answer_text: string; named_list: Array<{ name: string; rank: number }> }>();
+  try {
+    const cleaned = rawText.replace(/```json\s*/gi, "").replace(/```\s*$/g, "").trim();
+    const parsed = JSON.parse(cleaned);
+    const entries = Array.isArray(parsed?.results) ? parsed.results : [];
+    for (const query of requestedQueries) {
+      const entry = entries.find((item: any) => String(item?.query || "").trim() === query);
+      const answerText = String(entry?.answer_text || entry?.answer || "").trim();
+      if (!entry || !answerText) continue;
+      const businesses = Array.isArray(entry.businesses) ? entry.businesses : [];
+      results.set(query, {
+        answer_text: answerText,
+        named_list: businesses
+          .map((business: any, idx: number) => ({ name: String(business?.name || "").trim(), rank: Number(business?.rank) || idx + 1 }))
+          .filter((business: { name: string }) => business.name.length > 0),
+      });
+    }
+  } catch {
+    // A malformed batch is not evidence for any individual query, so those
+    // rows remain failed instead of being fabricated from a shared response.
+  }
+  return results;
+}
+
 // -------------------------------------------------------------
 // Gemini Call: Query Generation (Cached per locality)
 // -------------------------------------------------------------
@@ -1662,10 +1690,6 @@ async function runDiscoveryPipeline(
         }
       );
 
-      const queryJobs = groups.flatMap(({ loc, groupBusinesses, groupNormalized, localityQueries }) =>
-        localityQueries.map((query, qIdx) => ({ loc, groupBusinesses, groupNormalized, query, qIdx }))
-      );
-
       const markFailed = (groupBusinesses: typeof top20, qIdx: number) => {
         for (const b of groupBusinesses) {
           const entry = b.ai?.queries?.[qIdx];
@@ -1675,66 +1699,70 @@ async function runDiscoveryPipeline(
         }
       };
 
+      const applyGroundedResult = (
+        groupBusinesses: typeof top20,
+        groupNormalized: Array<{ business: any; tokens: Set<string> }>,
+        qIdx: number,
+        result: GroundedQueryResult
+      ) => {
+        for (const business of groupBusinesses) {
+          const entry = business.ai.queries[qIdx];
+          if (entry) Object.assign(entry, { status: "tested", mentioned: false, rank: null, answer_text: result.answer_text, verbatim_answer: result.answer_text });
+        }
+        for (const named of result.named_list) {
+          const rawName = String(named.name || "").trim();
+          if (!rawName) continue;
+          const tokensNamed = new Set(normalizeName(rawName).split(" ").filter(Boolean));
+          let bestMatch: any = null;
+          let highestOverlap = 0;
+          for (const candidate of groupNormalized) {
+            const overlap = calculateTokenOverlap(tokensNamed, candidate.tokens);
+            if (overlap >= 0.65 && overlap > highestOverlap) {
+              highestOverlap = overlap;
+              bestMatch = candidate.business;
+            }
+          }
+          if (bestMatch) {
+            Object.assign(bestMatch.ai.queries[qIdx], { mentioned: true, rank: named.rank || 1 });
+          } else {
+            unmatchedMap[rawName] = (unmatchedMap[rawName] || 0) + 1;
+          }
+        }
+      };
+
       try {
         await withTimeout(
-          runWithConcurrency(queryJobs, GROUNDING_QUERY_CONCURRENCY, async ({ loc, groupBusinesses, groupNormalized, query, qIdx }) => {
-            let namedList: Array<{ name: string; rank: number }> = [];
-            let verbatimAnswerText = "";
-            const cached = await getCachedGroundedQuery(category, loc, query);
+          runWithConcurrency(groups, GROUNDING_QUERY_CONCURRENCY, async ({ loc, groupBusinesses, groupNormalized, localityQueries }) => {
+            const cachedResults = await Promise.all(localityQueries.map((query) => getCachedGroundedQuery(category, loc, query)));
+            const uncached: Array<{ query: string; qIdx: number }> = [];
 
-            if (cached) {
-              verbatimAnswerText = cached.answer_text;
-              namedList = cached.named_list;
-            } else {
-              const searchPrompt = `Act as an AI local recommendation assistant in ${loc}. Answer this customer search query: "${query}".\nList the top 5 recommended local businesses in ${loc} in order based on current web and local results.\nFormat your answer clearly with the numbered rank and business name.`;
-              try {
-                const response = await withTimeout(
-                  callGeminiWithRetry(ai, { model: MODEL, contents: searchPrompt, config: { tools: [{ googleSearch: {} }] } }, 1, 1500),
-                  GROUNDING_QUERY_TIMEOUT_MS,
-                  `Grounded query ${qIdx + 1}`
-                );
-                verbatimAnswerText = response.text?.trim() || "";
-                namedList = extractBusinessesFromGroundingText(verbatimAnswerText);
-                if (verbatimAnswerText) {
-                  await saveGroundedQuery(category, loc, query, {
-                    answer_text: verbatimAnswerText,
-                    named_list: namedList,
-                    tested_at: new Date().toISOString(),
-                  });
+            cachedResults.forEach((cached, qIdx) => {
+              if (cached) applyGroundedResult(groupBusinesses, groupNormalized, qIdx, cached);
+              else uncached.push({ query: localityQueries[qIdx], qIdx });
+            });
+            if (uncached.length === 0) return;
+
+            const searchPrompt = `Act as an AI local recommendation assistant in ${loc}. Use Google Search grounding to answer EACH customer query below independently. Return JSON only in this exact shape: {"results":[{"query":"exact input query","answer_text":"the recommendation response for that query","businesses":[{"name":"business name","rank":1}]}]}. Include every query, preserve its exact text, and list up to five recommended businesses in rank order.\n\nCustomer queries:\n${JSON.stringify(uncached.map(({ query }) => query))}`;
+            try {
+              const response = await withTimeout(
+                callGeminiWithRetry(ai, { model: MODEL, contents: searchPrompt, config: { tools: [{ googleSearch: {} }] } }, 1, 1500),
+                GROUNDING_QUERY_TIMEOUT_MS,
+                `Grounded locality batch for ${loc}`
+              );
+              const parsed = parseGroundedBatch(response.text?.trim() || "", uncached.map(({ query }) => query));
+              for (const { query, qIdx } of uncached) {
+                const parsedResult = parsed.get(query);
+                if (!parsedResult) {
+                  markFailed(groupBusinesses, qIdx);
+                  continue;
                 }
-              } catch (err) {
-                console.warn(`Gemini Search Grounding failed for query "${query}":`, err);
+                const result: GroundedQueryResult = { ...parsedResult, tested_at: new Date().toISOString() };
+                await saveGroundedQuery(category, loc, query, result);
+                applyGroundedResult(groupBusinesses, groupNormalized, qIdx, result);
               }
-            }
-
-            if (!verbatimAnswerText) {
-              markFailed(groupBusinesses, qIdx);
-              return;
-            }
-
-            for (const b of groupBusinesses) {
-              const entry = b.ai.queries[qIdx];
-              if (entry) Object.assign(entry, { status: "tested", mentioned: false, rank: null, answer_text: verbatimAnswerText, verbatim_answer: verbatimAnswerText });
-            }
-
-            for (const named of namedList) {
-              const rawName = String(named.name || "").trim();
-              if (!rawName) continue;
-              const tokensNamed = new Set(normalizeName(rawName).split(" ").filter(Boolean));
-              let bestMatch: any = null;
-              let highestOverlap = 0;
-              for (const candidate of groupNormalized) {
-                const overlap = calculateTokenOverlap(tokensNamed, candidate.tokens);
-                if (overlap >= 0.65 && overlap > highestOverlap) {
-                  highestOverlap = overlap;
-                  bestMatch = candidate.business;
-                }
-              }
-              if (bestMatch) {
-                Object.assign(bestMatch.ai.queries[qIdx], { mentioned: true, rank: named.rank || 1 });
-              } else {
-                unmatchedMap[rawName] = (unmatchedMap[rawName] || 0) + 1;
-              }
+            } catch (err) {
+              console.warn(`Gemini Search Grounding batch failed for ${loc}:`, err);
+              for (const { qIdx } of uncached) markFailed(groupBusinesses, qIdx);
             }
           }),
           VISIBILITY_STAGE_TIMEOUT_MS,
