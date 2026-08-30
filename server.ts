@@ -188,7 +188,11 @@ function analyzeHtmlLocally(
 }
 
 // -------------------------------------------------------------
-// Data Persistence Layer (File-backed local store + in-memory)
+// Data Persistence Layer
+//
+// Cloud Run's local filesystem is ephemeral. Firestore is the production
+// source of truth; the JSON file exists only so `npm run dev` works without a
+// Google Cloud project. The in-memory object is a per-instance read cache.
 // -------------------------------------------------------------
 const DATA_STORE_FILE = path.join(process.cwd(), "data_store.json");
 
@@ -226,35 +230,77 @@ function saveLocalStore() {
   }
 }
 
-loadLocalStore();
+// Never preload the bundled development JSON file in Cloud Run: Firestore is
+// authoritative there and stale sample data must not win a cache lookup.
+if (!firestore) loadLocalStore();
 
-function dbSaveRun(runId: string, data: Record<string, any>) {
+let lastRunsListReadAt = 0;
+const RUN_LIST_CACHE_TTL_MS = 15_000;
+
+async function dbSaveRun(runId: string, data: Record<string, any>) {
   store.runs[runId] = { ...(store.runs[runId] || {}), ...data };
-  saveLocalStore();
-}
-
-function dbGetRun(runId: string) {
-  return store.runs[runId] || null;
-}
-
-function dbSaveBusiness(placeId: string, data: Record<string, any>) {
-  store.businesses[placeId] = data;
-  saveLocalStore();
-}
-
-function dbGetIndexStats() {
-  // Aggregate from all stored businesses and runs
-  for (const run of Object.values(store.runs)) {
-    if (Array.isArray(run.results)) {
-      for (const b of run.results) {
-        if (b.place_id && !store.businesses[b.place_id]) {
-          store.businesses[b.place_id] = b;
-        }
-      }
-    }
+  if (firestore) {
+    await firestore.collection("runs").doc(runId).set(data, { merge: true });
+  } else {
+    saveLocalStore();
   }
+}
 
-  const allBusinesses = Object.values(store.businesses);
+async function dbGetRun(runId: string) {
+  if (store.runs[runId]) return store.runs[runId];
+  if (!firestore) return null;
+  const snapshot = await firestore.collection("runs").doc(runId).get();
+  if (!snapshot.exists) return null;
+  const data = snapshot.data() || {};
+  store.runs[runId] = data;
+  return data;
+}
+
+async function dbSaveBusiness(placeId: string, data: Record<string, any>) {
+  store.businesses[placeId] = data;
+  if (firestore) {
+    await firestore.collection("businesses").doc(placeId).set(data, { merge: true });
+  } else {
+    saveLocalStore();
+  }
+}
+
+async function dbListRuns(): Promise<any[]> {
+  if (!firestore) return Object.values(store.runs);
+  if (Date.now() - lastRunsListReadAt < RUN_LIST_CACHE_TTL_MS) {
+    return Object.values(store.runs);
+  }
+  const snapshot = await firestore.collection("runs").get();
+  const runs = snapshot.docs.map((doc) => doc.data());
+  for (const run of runs) {
+    if (run.run_id) store.runs[run.run_id] = run;
+  }
+  lastRunsListReadAt = Date.now();
+  return runs;
+}
+
+async function dbListBusinesses(): Promise<any[]> {
+  if (!firestore) return Object.values(store.businesses);
+  const snapshot = await firestore.collection("businesses").get();
+  const businesses = snapshot.docs.map((doc) => doc.data());
+  for (const business of businesses) {
+    if (business.place_id) store.businesses[business.place_id] = business;
+  }
+  return businesses;
+}
+
+async function dbGetBusiness(placeId: string): Promise<any | null> {
+  if (store.businesses[placeId]) return store.businesses[placeId];
+  if (!firestore) return null;
+  const snapshot = await firestore.collection("businesses").doc(placeId).get();
+  if (!snapshot.exists) return null;
+  const business = snapshot.data() || null;
+  if (business) store.businesses[placeId] = business;
+  return business;
+}
+
+async function dbGetIndexStats() {
+  const allBusinesses = await dbListBusinesses();
   const total = allBusinesses.length;
   const categoriesSet = new Set<string>();
   for (const b of allBusinesses) {
@@ -292,7 +338,7 @@ function computeMedian(numbers: number[], fallback: number): number {
   return Number(((sorted[mid - 1] + sorted[mid]) / 2).toFixed(2));
 }
 
-function getEstimatesForCategory(category: string): {
+async function getEstimatesForCategory(category: string): Promise<{
   category: string;
   runs_sampled: number;
   stages: {
@@ -304,9 +350,9 @@ function getEstimatesForCategory(category: string): {
     scoring: number;
   };
   estimated_total_sec: number;
-} {
+}> {
   const normCat = (category || "").toLowerCase().trim();
-  const completedRuns = Object.values(store.runs)
+  const completedRuns = (await dbListRuns())
     .filter((r: any) => r.status === "complete" && String(r.category || "").toLowerCase().trim() === normCat)
     .slice(-5);
 
@@ -724,25 +770,40 @@ function computeOpportunityValueEstimate(
   };
 }
 
-function dbGetQuerySet(category: string, locality: string): string[] | null {
+function querySetKey(category: string, locality: string): string {
+  return crypto.createHash("sha256").update(`${category.toLowerCase().trim()}|${locality.toLowerCase().trim()}`).digest("hex");
+}
+
+async function dbGetQuerySet(category: string, locality: string): Promise<string[] | null> {
   const key = `${category.toLowerCase().trim()}_${locality.toLowerCase().trim()}`;
   const found = store.query_sets[key];
   if (found && Array.isArray(found.queries) && found.queries.length > 0) {
     return found.queries;
   }
-  return null;
+  if (!firestore) return null;
+  const snapshot = await firestore.collection("query_sets").doc(querySetKey(category, locality)).get();
+  if (!snapshot.exists) return null;
+  const data = snapshot.data();
+  if (!Array.isArray(data?.queries) || data.queries.length === 0) return null;
+  store.query_sets[key] = data as DataStore["query_sets"][string];
+  return data.queries.map((query: any) => String(query));
 }
 
-function dbSaveQuerySet(category: string, locality: string, queries: string[]) {
+async function dbSaveQuerySet(category: string, locality: string, queries: string[]) {
   const key = `${category.toLowerCase().trim()}_${locality.toLowerCase().trim()}`;
-  store.query_sets[key] = {
+  const data = {
     queries,
     category,
     locality,
     location: locality,
     created_at: new Date().toISOString(),
   };
-  saveLocalStore();
+  store.query_sets[key] = data;
+  if (firestore) {
+    await firestore.collection("query_sets").doc(querySetKey(category, locality)).set(data, { merge: true });
+  } else {
+    saveLocalStore();
+  }
 }
 
 type GroundedQueryResult = {
@@ -1382,7 +1443,7 @@ function parseGroundedBatch(
 // Gemini Call: Query Generation (Cached per locality)
 // -------------------------------------------------------------
 async function getOrGenerateQueries(category: string, locality: string): Promise<string[]> {
-  const cached = dbGetQuerySet(category, locality);
+  const cached = await dbGetQuerySet(category, locality);
   if (cached && cached.length === CUSTOMER_QUERY_COUNT) {
     return cached;
   }
@@ -1412,7 +1473,7 @@ async function getOrGenerateQueries(category: string, locality: string): Promise
       }
     }
     queries = queries.slice(0, CUSTOMER_QUERY_COUNT);
-    dbSaveQuerySet(category, locality, queries);
+    await dbSaveQuerySet(category, locality, queries);
     return queries;
   } catch (err) {
     console.warn(`Error generating queries from Gemini for ${category}_${locality}, using fallback:`, err);
@@ -1428,7 +1489,7 @@ async function getOrGenerateQueries(category: string, locality: string): Promise
       `local ${category.toLowerCase()} ${locality}`,
       `top 10 ${category.toLowerCase()} in ${locality}`,
     ];
-    dbSaveQuerySet(category, locality, fallbackQueries);
+    await dbSaveQuerySet(category, locality, fallbackQueries);
     return fallbackQueries;
   }
 }
@@ -1456,7 +1517,7 @@ async function runDiscoveryPipeline(
     // Phase 1: Discovering
     // ---------------------------------------------------------
     let stageStart = Date.now();
-    dbSaveRun(runId, {
+    await dbSaveRun(runId, {
       status: "running",
       stage: "discovering",
       stage_status: {
@@ -1490,7 +1551,7 @@ async function runDiscoveryPipeline(
     // Phase 2: Qualifying
     // ---------------------------------------------------------
     stageStart = Date.now();
-    dbSaveRun(runId, {
+    await dbSaveRun(runId, {
       status: "running",
       stage: "qualifying",
       stage_status: {
@@ -1512,21 +1573,15 @@ async function runDiscoveryPipeline(
     const qualifiedCount = top20.length;
     const auditCandidates = top20.slice(0, 10);
 
-    // Persist all candidates and qualified businesses
-    for (const b of top20) {
-      dbSaveBusiness(b.place_id, b);
-    }
-    for (const b of normalized) {
-      if (!top20.find((t) => t.place_id === b.place_id)) {
-        dbSaveBusiness(b.place_id, b);
-      }
-    }
+    // Persist candidate records concurrently. Serial writes would turn the
+    // durable store itself into the scan bottleneck.
+    await Promise.all(normalized.map((business) => dbSaveBusiness(business.place_id, business)));
     stageTimings.qualifying = Number(((Date.now() - stageStart) / 1000).toFixed(2));
 
     // ---------------------------------------------------------
     // Phase 3 & 4: Auditing & AI Testing (Concurrent execution)
     // ---------------------------------------------------------
-    dbSaveRun(runId, {
+    await dbSaveRun(runId, {
       status: "running",
       stage: "auditing",
       stage_status: {
@@ -1659,8 +1714,8 @@ async function runDiscoveryPipeline(
       });
 
       stageTimings.auditing = Number(((Date.now() - auditStart) / 1000).toFixed(2));
-      const currentDoc = dbGetRun(runId);
-      dbSaveRun(runId, {
+      const currentDoc = await dbGetRun(runId);
+      await dbSaveRun(runId, {
         stage_status: {
           ...(currentDoc?.stage_status || {}),
           auditing: "done",
@@ -1828,8 +1883,8 @@ async function runDiscoveryPipeline(
       }
 
       stageTimings.testing = Number(((Date.now() - testStart) / 1000).toFixed(2));
-      const currentDoc = dbGetRun(runId);
-      dbSaveRun(runId, {
+      const currentDoc = await dbGetRun(runId);
+      await dbSaveRun(runId, {
         stage_status: {
           ...(currentDoc?.stage_status || {}),
           testing: "done",
@@ -1846,17 +1901,15 @@ async function runDiscoveryPipeline(
     // Wait for both concurrent stages to complete
     await Promise.all([auditPromise, testingPromise]);
 
-    // Save all businesses with updated site & ai info
-    for (const b of top20) {
-      dbSaveBusiness(b.place_id, b);
-    }
+    // Save all businesses with updated site & AI information.
+    await Promise.all(top20.map((business) => dbSaveBusiness(business.place_id, business)));
 
     // ---------------------------------------------------------
     // Phase 5: Comparing (Competitor Resolution & Competitive Gap)
     // ---------------------------------------------------------
     const compareStart = Date.now();
-    const compareDoc = dbGetRun(runId);
-    dbSaveRun(runId, {
+    const compareDoc = await dbGetRun(runId);
+    await dbSaveRun(runId, {
       stage: "comparing",
       stage_status: {
         ...(compareDoc?.stage_status || {}),
@@ -1929,8 +1982,8 @@ async function runDiscoveryPipeline(
     }
 
     stageTimings.comparing = Number(((Date.now() - compareStart) / 1000).toFixed(2));
-    const compareDoneDoc = dbGetRun(runId);
-    dbSaveRun(runId, {
+    const compareDoneDoc = await dbGetRun(runId);
+    await dbSaveRun(runId, {
       stage_status: {
         ...(compareDoneDoc?.stage_status || {}),
         comparing: "done",
@@ -1947,8 +2000,8 @@ async function runDiscoveryPipeline(
     // Phase 6: Scoring, Service Recommendations, and Gold Ranking
     // ---------------------------------------------------------
     const completeStart = Date.now();
-    const completeDoc = dbGetRun(runId);
-    dbSaveRun(runId, {
+    const completeDoc = await dbGetRun(runId);
+    await dbSaveRun(runId, {
       stage: "complete",
       stage_status: {
         ...(completeDoc?.stage_status || {}),
@@ -2003,15 +2056,13 @@ async function runDiscoveryPipeline(
       return Number(a.visibility_score || 0) - Number(b.visibility_score || 0);
     });
 
-    // Persist all businesses
-    for (const b of top20) {
-      dbSaveBusiness(b.place_id, b);
-    }
+    // Persist all businesses.
+    await Promise.all(top20.map((business) => dbSaveBusiness(business.place_id, business)));
 
     stageTimings.complete = Number(((Date.now() - completeStart) / 1000).toFixed(2));
     const totalDurationSec = Number(((Date.now() - pipelineStart) / 1000).toFixed(2));
 
-    dbSaveRun(runId, {
+    await dbSaveRun(runId, {
       status: "complete",
       stage: "complete",
       stage_status: {
@@ -2047,7 +2098,7 @@ async function runDiscoveryPipeline(
     });
   } catch (err: any) {
     console.error(`Error in discovery pipeline run ${runId}:`, err);
-    dbSaveRun(runId, {
+    await dbSaveRun(runId, {
       status: "error",
       stage: "error",
       error: String(err?.message || err),
@@ -2066,10 +2117,11 @@ app.get("/api/health", (req: Request, res: Response) => {
     status: "ok",
     authMode: "vertex",
     model: MODEL,
+    persistence: firestore ? "firestore" : "local-development-fallback",
   });
 });
 
-const handleRunCreation = (req: Request, res: Response) => {
+const handleRunCreation = async (req: Request, res: Response) => {
   const body = req.body || {};
   const category = String(body.category || "Restaurants and cafés").trim();
   const location = String(body.location || "London").trim();
@@ -2106,7 +2158,7 @@ const handleRunCreation = (req: Request, res: Response) => {
     results: [],
   };
 
-  dbSaveRun(runId, runDoc);
+  await dbSaveRun(runId, runDoc);
 
   // Background execution
   setImmediate(() => {
@@ -2119,25 +2171,25 @@ const handleRunCreation = (req: Request, res: Response) => {
 app.post("/api/run", handleRunCreation);
 app.post("/api/discover", handleRunCreation);
 
-app.get("/api/runs", (req: Request, res: Response) => {
-  res.json(Object.values(store.runs));
+app.get("/api/runs", async (req: Request, res: Response) => {
+  res.json(await dbListRuns());
 });
 
-app.get("/api/estimates", (req: Request, res: Response) => {
+app.get("/api/estimates", async (req: Request, res: Response) => {
   const category = String(req.query.category || "").trim();
-  const estimates = getEstimatesForCategory(category);
+  const estimates = await getEstimatesForCategory(category);
   res.json(estimates);
 });
 
-app.get("/api/run/:runId", (req: Request, res: Response) => {
+app.get("/api/run/:runId", async (req: Request, res: Response) => {
   const { runId } = req.params;
-  const runData = dbGetRun(runId);
+  const runData = await dbGetRun(runId);
   if (!runData) {
     res.status(404).json({ error: "Run not found" });
     return;
   }
 
-  const estimates = getEstimatesForCategory(runData.category);
+  const estimates = await getEstimatesForCategory(runData.category);
   const elapsedSec = runData.started_at
     ? Number(((Date.now() - new Date(runData.started_at).getTime()) / 1000).toFixed(1))
     : 0;
@@ -2150,9 +2202,9 @@ app.get("/api/run/:runId", (req: Request, res: Response) => {
   });
 });
 
-app.get("/api/business/:placeId", (req: Request, res: Response) => {
+app.get("/api/business/:placeId", async (req: Request, res: Response) => {
   const { placeId } = req.params;
-  const business = store.businesses[placeId];
+  const business = await dbGetBusiness(placeId);
   if (!business) {
     res.status(404).json({ error: "Business not found" });
     return;
@@ -2164,11 +2216,11 @@ app.get("/api/business/:placeId", (req: Request, res: Response) => {
 app.post("/api/outreach/:placeId", async (req: Request, res: Response) => {
   const { placeId } = req.params;
   const body = req.body || {};
-  let business = store.businesses[placeId];
+  let business = await dbGetBusiness(placeId);
 
   // If not directly in store, search through runs
   if (!business) {
-    for (const run of Object.values(store.runs)) {
+    for (const run of await dbListRuns()) {
       const found = (run.results || []).find((b: any) => b.place_id === placeId);
       if (found) {
         business = found;
@@ -2241,16 +2293,15 @@ Open with the observation about their reputation, state the gap with one number,
     }
 
     business.outreach = outreachText;
-    dbSaveBusiness(business.place_id, business);
+    await dbSaveBusiness(business.place_id, business);
 
     // Also update inside run results
-    for (const run of Object.values(store.runs)) {
+    for (const run of await dbListRuns()) {
       const match = (run.results || []).find((b: any) => b.place_id === placeId);
       if (match) {
         match.outreach = outreachText;
       }
     }
-    saveLocalStore();
 
     res.json({
       outreach: outreachText,
@@ -2277,7 +2328,7 @@ Best regards,
 Growth Team`;
 
     business.outreach = `Subject: ${fallbackSubject}\n\n${fallbackBody}`;
-    dbSaveBusiness(business.place_id, business);
+    await dbSaveBusiness(business.place_id, business);
     res.json({
       outreach: business.outreach,
       subject: fallbackSubject,
@@ -2300,7 +2351,7 @@ app.post("/api/seed", (req: Request, res: Response) => {
         const rawPlaces = await fetchPlacesPaginated(cat, location, 1);
         for (const p of rawPlaces) {
           const b = normalizePlace(p, cat, location);
-          dbSaveBusiness(b.place_id, b);
+          await dbSaveBusiness(b.place_id, b);
         }
       } catch (err) {
         console.warn(`Seeding error for ${cat}:`, err);
@@ -2315,26 +2366,26 @@ app.post("/api/seed", (req: Request, res: Response) => {
   });
 });
 
-app.get("/api/index/stats", (req: Request, res: Response) => {
-  res.json(dbGetIndexStats());
+app.get("/api/index/stats", async (req: Request, res: Response) => {
+  res.json(await dbGetIndexStats());
 });
 
-app.get("/api/spotlight", (req: Request, res: Response) => {
+app.get("/api/spotlight", async (req: Request, res: Response) => {
   // Sync all businesses from all run results into businesses collection
-  for (const run of Object.values(store.runs)) {
+  for (const run of await dbListRuns()) {
     if (Array.isArray(run.results)) {
       for (const b of run.results) {
         if (b.place_id) {
-          const existing = store.businesses[b.place_id];
+          const existing = await dbGetBusiness(b.place_id);
           if (!existing || (b.gold_score || 0) > (existing.gold_score || 0)) {
-            store.businesses[b.place_id] = b;
+            await dbSaveBusiness(b.place_id, b);
           }
         }
       }
     }
   }
 
-  const allBusinesses = Object.values(store.businesses);
+  const allBusinesses = await dbListBusinesses();
   const measuredBusinesses = allBusinesses.filter(hasMeasuredAiVisibility);
   if (measuredBusinesses.length === 0) {
     res.status(404).json({ error: "No business has a completed AI visibility measurement yet" });
