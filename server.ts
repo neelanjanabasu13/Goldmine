@@ -2012,7 +2012,7 @@ async function runDiscoveryPipeline(
 app.get("/api/health", (req: Request, res: Response) => {
   res.json({
     status: "ok",
-    authMode: process.env.GEMINI_API_KEY ? "api_key" : "vertex",
+    authMode: "vertex",
     model: MODEL,
   });
 });
