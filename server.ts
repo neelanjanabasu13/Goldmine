@@ -23,6 +23,12 @@ const GROUNDING_QUERY_TIMEOUT_MS = Math.max(1_000, Number(process.env.GROUNDING_
 const VISIBILITY_STAGE_TIMEOUT_MS = Math.max(1_000, Number(process.env.VISIBILITY_STAGE_TIMEOUT_MS || 55_000));
 const PLACES_REQUEST_TIMEOUT_MS = Math.max(1_000, Number(process.env.PLACES_REQUEST_TIMEOUT_MS || 8_000));
 const PLACES_MAX_PAGES = Math.max(1, Math.min(3, Number(process.env.PLACES_MAX_PAGES || 3)));
+
+function hasMeasuredAiVisibility(business: any): boolean {
+  return Number(business?.ai?.total || 0) > 0
+    && Array.isArray(business?.ai?.queries)
+    && business.ai.queries.some((query: any) => query?.status === "tested");
+}
 const QUERY_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
 const firestoreProject = process.env.GOOGLE_CLOUD_PROJECT || process.env.GCLOUD_PROJECT;
 const firestore = firestoreProject ? new Firestore({ projectId: firestoreProject }) : null;
@@ -36,7 +42,9 @@ function getGenAI(): GoogleGenAI {
   return new GoogleGenAI({
     vertexai: true,
     project,
-    location: process.env.GOOGLE_CLOUD_LOCATION || process.env.VERTEX_LOCATION || "europe-west1",
+    // Gemini 3.7 Flash is served through Vertex AI's global endpoint. Cloud Run
+    // can remain in europe-west1; the model call itself must not be pinned there.
+    location: process.env.GOOGLE_CLOUD_LOCATION || process.env.VERTEX_LOCATION || "global",
     httpOptions: {
       headers: {
         "User-Agent": "goldmine-cloud-run",
@@ -1170,13 +1178,15 @@ function determineServiceRecommendation(
   if (b.site.performance < 50 && !b.site.no_website) {
     triggers.push("Website rebuild");
   }
-  if (b.ai.visibility < 30 && b.site.seo >= 70) {
+  if (hasMeasuredAiVisibility(b) && b.ai.visibility < 30 && b.site.seo >= 70) {
     triggers.push("GEO and AI-search optimisation");
   }
 
   let mapped = "Website plus SEO package";
   if (triggers.length === 0) {
-    mapped = b.ai.visibility < 30 ? "GEO and AI-search optimisation" : "Local SEO";
+    mapped = hasMeasuredAiVisibility(b) && b.ai.visibility < 30
+      ? "GEO and AI-search optimisation"
+      : "Local SEO";
   } else if (triggers.length === 1) {
     mapped = triggers[0];
   } else {
@@ -1220,7 +1230,7 @@ function generateDefaultRationale(b: any, service: string): string {
     if (b.site.coverage && !b.site.coverage.service_pages) issues.push("dedicated service category pages are missing");
     if (b.site.coverage && !b.site.coverage.location_content) issues.push("local geographic geo-signals are absent");
   }
-  if (b.ai.visibility < 30) {
+  if (hasMeasuredAiVisibility(b) && b.ai.visibility < 30) {
     issues.push(`AI discoverability is low (${b.ai.visibility}%), appearing in only ${b.ai.mentions || 0} of ${b.ai.total || 10} relevant customer searches`);
   }
 
@@ -1693,11 +1703,18 @@ async function runDiscoveryPipeline(
         }
       );
 
-      const markFailed = (groupBusinesses: typeof top20, qIdx: number) => {
+      const markFailed = (groupBusinesses: typeof top20, qIdx: number, reason?: string) => {
         for (const b of groupBusinesses) {
           const entry = b.ai?.queries?.[qIdx];
           if (entry && entry.status === "pending") {
-            Object.assign(entry, { status: "failed", mentioned: false, rank: null, answer_text: "", verbatim_answer: "" });
+            Object.assign(entry, {
+              status: "failed",
+              mentioned: false,
+              rank: null,
+              answer_text: "",
+              verbatim_answer: "",
+              failure_reason: reason ? String(reason).slice(0, 300) : "AI response was unavailable for this query.",
+            });
           }
         }
       };
@@ -1765,7 +1782,8 @@ async function runDiscoveryPipeline(
               }
             } catch (err) {
               console.warn(`Gemini Search Grounding batch failed for ${loc}:`, err);
-              for (const { qIdx } of uncached) markFailed(groupBusinesses, qIdx);
+              const reason = String((err as any)?.message || "AI response was unavailable for this locality.");
+              for (const { qIdx } of uncached) markFailed(groupBusinesses, qIdx, reason);
             }
           }),
           VISIBILITY_STAGE_TIMEOUT_MS,
@@ -1774,7 +1792,8 @@ async function runDiscoveryPipeline(
       } catch (err) {
         console.warn("AI visibility stage timed out; saving completed query results:", err);
         for (const { groupBusinesses } of groups) {
-          for (let qIdx = 0; qIdx < CUSTOMER_QUERY_COUNT; qIdx++) markFailed(groupBusinesses, qIdx);
+          const reason = String((err as any)?.message || "AI visibility stage timed out.");
+          for (let qIdx = 0; qIdx < CUSTOMER_QUERY_COUNT; qIdx++) markFailed(groupBusinesses, qIdx, reason);
         }
       }
 
@@ -1930,12 +1949,18 @@ async function runDiscoveryPipeline(
       const siteHealth = b.site.no_website
         ? 0
         : Math.round(((b.site.performance || 0) + (b.site.seo || 0)) / 2);
-      const visibilityScore = Math.round(0.7 * (b.ai.visibility || 0) + 0.3 * siteHealth);
-      const goldScore = Math.round((b.quality.score * (100 - visibilityScore)) / 100);
+      const aiMeasured = hasMeasuredAiVisibility(b);
+      const visibilityScore = aiMeasured
+        ? Math.round(0.7 * b.ai.visibility + 0.3 * siteHealth)
+        : null;
+      const goldScore = visibilityScore === null
+        ? null
+        : Math.round((b.quality.score * (100 - visibilityScore)) / 100);
 
       b.site_health = siteHealth;
       b.visibility_score = visibilityScore;
       b.gold_score = goldScore;
+      b.score_status = aiMeasured ? "measured" : "unmeasured";
 
       // Deterministic service mapping
       const { service } = determineServiceRecommendation(b, services);
@@ -1951,13 +1976,16 @@ async function runDiscoveryPipeline(
 
     // Sort descending by gold_score
     top20.sort((a, b) => {
-      if (b.gold_score !== a.gold_score) {
-        return b.gold_score - a.gold_score;
+      const aMeasured = hasMeasuredAiVisibility(a);
+      const bMeasured = hasMeasuredAiVisibility(b);
+      if (aMeasured !== bMeasured) return aMeasured ? -1 : 1;
+      if (aMeasured && b.gold_score !== a.gold_score) {
+        return Number(b.gold_score) - Number(a.gold_score);
       }
       if (b.quality.score !== a.quality.score) {
         return b.quality.score - a.quality.score;
       }
-      return a.visibility_score - b.visibility_score;
+      return Number(a.visibility_score || 0) - Number(b.visibility_score || 0);
     });
 
     // Persist all businesses
@@ -2105,6 +2133,11 @@ app.get("/api/business/:placeId", (req: Request, res: Response) => {
   const business = store.businesses[placeId];
   if (!business) {
     res.status(404).json({ error: "Business not found" });
+    return;
+  }
+
+  if (!hasMeasuredAiVisibility(business)) {
+    res.status(422).json({ error: "Outreach is unavailable because AI visibility was not measured for this business." });
     return;
   }
   res.json(business);

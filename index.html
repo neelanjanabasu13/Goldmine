@@ -566,15 +566,18 @@
         const reviewsCount = Number(biz.review_count || 0);
         const reviewsFormatted = reviewsCount.toLocaleString();
         const rating = Number(biz.rating || 0).toFixed(1);
-        const aiVis = Number(biz.ai?.visibility || 0);
-        const goldScore = Math.round(Number(biz.gold_score || 0));
+        const aiMeasured = hasMeasuredAiVisibility(biz);
+        const aiVis = aiMeasured ? Number(biz.ai?.visibility || 0) : null;
+        const goldScore = aiMeasured ? Math.round(Number(biz.gold_score || 0)) : null;
         const aiMentions = Number(biz.ai?.mentions || 0);
-        const aiTotal = Number(biz.ai?.total || 10);
-        const recService = biz.recommended_service || "SEO, websites and AI visibility";
+        const aiTotal = Number(biz.ai?.total || 0);
+        const recService = biz.recommended_service || "Technical audit follow-up";
 
         let summarySentence = "";
         const catSingular = category.toLowerCase().replace(/s and .*/, "").replace(/ies$/, "y").replace(/s$/, "");
-        if (aiVis === 0 || aiMentions === 0) {
+        if (!aiMeasured) {
+          summarySentence = `A ${escapeHtml(catSingular)} with ${reviewsFormatted} reviews at ${rating} stars. AI visibility could not be measured in this run.`;
+        } else if (aiVis === 0 || aiMentions === 0) {
           summarySentence = `A ${escapeHtml(catSingular)} with ${reviewsFormatted} reviews at ${rating} stars that Gemini has never once recommended.`;
         } else {
           summarySentence = `A ${escapeHtml(catSingular)} with ${reviewsFormatted} reviews at ${rating} stars that Gemini recommends in only ${aiMentions} of ${aiTotal} searches.`;
@@ -587,7 +590,7 @@
                 <div class="biz-name">${escapeHtml(biz.name)}</div>
                 <div class="biz-addr">${escapeHtml(category)} · ${escapeHtml(address)}</div>
               </div>
-              <div class="coin"><strong id="proofGoldVal">${goldScore}</strong><em>GOLD</em></div>
+              <div class="coin"><strong id="proofGoldVal">${goldScore ?? "—"}</strong><em>${aiMeasured ? "GOLD" : "PENDING"}</em></div>
             </div>
             <div class="split">
               <div class="half customers">
@@ -597,8 +600,8 @@
               </div>
               <div class="half ai">
                 <div class="lab">WHAT AI THINKS</div>
-                <div class="big" id="proofAiVis">${aiVis}%</div>
-                <div class="note">named in ${aiMentions} of ${aiTotal} searches customers actually make</div>
+                <div class="big" id="proofAiVis">${aiMeasured ? `${aiVis}%` : "—"}</div>
+                <div class="note">${aiMeasured ? `named in ${aiMentions} of ${aiTotal} searches customers actually make` : "AI visibility could not be measured"}</div>
               </div>
             </div>
             <div class="verdict">
@@ -615,9 +618,9 @@
         `;
 
         // Animate count ups on first render
-        animateCountUp(document.getElementById("proofGoldVal"), goldScore, 600);
+        if (aiMeasured) animateCountUp(document.getElementById("proofGoldVal"), goldScore, 600);
         animateCountUp(document.getElementById("proofRating"), Number(rating), 600, "", "", 1);
-        animateCountUp(document.getElementById("proofAiVis"), aiVis, 600, "", "%");
+        if (aiMeasured) animateCountUp(document.getElementById("proofAiVis"), aiVis, 600, "", "%");
 
         document.getElementById("landingProofCard").addEventListener("click", () => {
           currentBusiness = biz;
@@ -835,7 +838,12 @@
       function renderResultsView(runDoc) {
         const category = runDoc.category || "Businesses";
         const location = runDoc.location || "London";
-        const results = [...(runDoc.results || [])].sort((a, b) => (b.gold_score || 0) - (a.gold_score || 0));
+        const results = [...(runDoc.results || [])].sort((a, b) => {
+          const aMeasured = hasMeasuredAiVisibility(a);
+          const bMeasured = hasMeasuredAiVisibility(b);
+          if (aMeasured !== bMeasured) return aMeasured ? -1 : 1;
+          return Number(b.gold_score || 0) - Number(a.gold_score || 0);
+        });
 
         document.getElementById("resultsHeadline").textContent =
           `Goldmine found ${results.length} opportunities in ${category}, ${location}`;
@@ -853,8 +861,8 @@
             </td>
             <td style="text-align: right;">${b.rating || 0}★ <span style="color: var(--faint); font-size: 13px;">(${b.review_count || 0})</span></td>
             <td style="text-align: right; color: var(--pos); font-weight: 600;">${b.quality?.score || 0}</td>
-            <td style="text-align: right; color: ${b.ai?.visibility < 40 ? 'var(--neg)' : 'var(--ink)'}; font-weight: 600;">${b.ai?.visibility || 0}%</td>
-            <td class="goldcell">${b.gold_score || 0}</td>
+            <td style="text-align: right; color: ${hasMeasuredAiVisibility(b) && b.ai?.visibility < 40 ? 'var(--neg)' : 'var(--faint)'}; font-weight: 600;">${hasMeasuredAiVisibility(b) ? `${b.ai.visibility}%` : 'Not measured'}</td>
+            <td class="goldcell">${hasMeasuredAiVisibility(b) ? b.gold_score : '—'}</td>
           `;
 
           tr.addEventListener("click", () => {
@@ -889,7 +897,8 @@
         const testedQueries = allQueries.filter((q) => q.status === "tested");
         const mentions = testedQueries.filter((q) => q.mentioned).length;
         const totalTested = testedQueries.length;
-        const visibility = totalTested > 0 ? Math.round((100 * mentions) / totalTested) : 0;
+        const aiMeasured = totalTested > 0;
+        const visibility = aiMeasured ? Math.round((100 * mentions) / totalTested) : null;
 
         document.getElementById("detailBizName").textContent = b.name || "Business";
         document.getElementById("detailBizAddr").textContent = `${b.category || category} · ${b.address || locality}`;
@@ -906,11 +915,13 @@
         document.getElementById("detailVerdict").textContent = verdictText;
 
         // Top Card Numbers (Count-up)
-        const goldScore = Math.round(Number(b.gold_score || 0));
-        animateCountUp(document.getElementById("detailGoldScore"), goldScore, 600);
+        const goldScore = aiMeasured ? Math.round(Number(b.gold_score || 0)) : null;
+        if (aiMeasured) animateCountUp(document.getElementById("detailGoldScore"), goldScore, 600);
+        else document.getElementById("detailGoldScore").textContent = "—";
         animateCountUp(document.getElementById("detailRating"), b.rating || 0, 600, "", "", 1);
         document.getElementById("detailReviewCount").textContent = `from ${(b.review_count || 0).toLocaleString()} customer reviews`;
-        animateCountUp(document.getElementById("detailAiVis"), visibility, 600, "", "%");
+        if (aiMeasured) animateCountUp(document.getElementById("detailAiVis"), visibility, 600, "", "%");
+        else document.getElementById("detailAiVis").textContent = "—";
 
         if (totalTested === 0) {
           document.getElementById("detailAiVisNote").textContent = "AI visibility not measured for this business";
@@ -1060,14 +1071,23 @@
 
         // 5. THE SCORE
         const quality = b.quality?.score || 0;
-        const vis = visibility;
-        const calculatedGold = Math.round((quality * (100 - vis)) / 100);
-        document.getElementById("detailScoreFormula").textContent =
-          `gold_score = ${quality} × (100 - ${vis}) / 100 = ${calculatedGold}`;
+        if (aiMeasured) {
+          const vis = visibility;
+          const calculatedGold = Math.round((quality * (100 - vis)) / 100);
+          document.getElementById("detailScoreFormula").textContent =
+            `gold_score = ${quality} × (100 - ${vis}) / 100 = ${calculatedGold}`;
+        } else {
+          document.getElementById("detailScoreFormula").textContent =
+            "Gold score unavailable until at least one customer query is successfully tested.";
+        }
 
         // Reset Outreach UI
         document.getElementById("outreachPanel").style.display = "none";
-        document.getElementById("btnSendOutreach").textContent = "SEND THIS PROSPECT AN EMAIL";
+        const outreachButton = document.getElementById("btnSendOutreach");
+        outreachButton.disabled = !aiMeasured;
+        outreachButton.textContent = aiMeasured
+          ? "SEND THIS PROSPECT AN EMAIL"
+          : "AI VISIBILITY MUST BE MEASURED BEFORE OUTREACH";
       }
 
       // -----------------------------------------------------------
@@ -1143,6 +1163,10 @@
       // -----------------------------------------------------------
       document.getElementById("btnSendOutreach").addEventListener("click", async () => {
         if (!currentBusiness) return;
+        if (!hasMeasuredAiVisibility(currentBusiness)) {
+          alert("Outreach is unavailable until Goldmine has successfully measured AI visibility.");
+          return;
+        }
         const btn = document.getElementById("btnSendOutreach");
         btn.textContent = "GENERATING OUTREACH...";
         btn.disabled = true;
@@ -1215,6 +1239,11 @@
           .replace(/>/g, "&gt;")
           .replace(/"/g, "&quot;")
           .replace(/'/g, "&#039;");
+      }
+
+      function hasMeasuredAiVisibility(business) {
+        const queries = Array.isArray(business?.ai?.queries) ? business.ai.queries : [];
+        return Number(business?.ai?.total || 0) > 0 && queries.some((query) => query?.status === "tested");
       }
 
       // Initialize on load
