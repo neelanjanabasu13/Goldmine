@@ -238,6 +238,8 @@ let lastRunsListReadAt = 0;
 const RUN_LIST_CACHE_TTL_MS = 15_000;
 let firestoreAvailable = Boolean(firestore);
 let firestoreFailure: string | null = null;
+let nextFirestoreRetryAt = 0;
+const FIRESTORE_RETRY_DELAY_MS = 15_000;
 
 function describeFirestoreFailure(error: unknown): string {
   const err = error as { code?: unknown; message?: unknown };
@@ -247,7 +249,12 @@ function describeFirestoreFailure(error: unknown): string {
 }
 
 async function useFirestore<T>(work: () => Promise<T>): Promise<T | null> {
-  if (!firestore || !firestoreAvailable) return null;
+  if (!firestore) return null;
+  if (!firestoreAvailable && Date.now() < nextFirestoreRetryAt) return null;
+  // IAM changes can be made while an instance is warm. Retry instead of
+  // requiring a redeploy or waiting for Cloud Run to replace the instance.
+  firestoreAvailable = true;
+  firestoreFailure = null;
   try {
     return await work();
   } catch (error) {
@@ -255,6 +262,7 @@ async function useFirestore<T>(work: () => Promise<T>): Promise<T | null> {
     // health endpoint exposes this degraded state, rather than pretending the
     // ephemeral fallback is durable storage.
     firestoreAvailable = false;
+    nextFirestoreRetryAt = Date.now() + FIRESTORE_RETRY_DELAY_MS;
     firestoreFailure = describeFirestoreFailure(error);
     console.error("Firestore unavailable; using non-durable instance fallback:", firestoreFailure);
     return null;
@@ -2132,7 +2140,7 @@ async function runDiscoveryPipeline(
 app.get("/api/health", async (req: Request, res: Response) => {
   // A read against a reserved, non-user document proves that the deployed
   // runtime can actually reach Firestore. It does not create or alter data.
-  if (firestoreAvailable && firestore) {
+  if (firestore) {
     await useFirestore(() => firestore.collection("_goldmine_system").doc("readiness").get());
   }
   res.json({
