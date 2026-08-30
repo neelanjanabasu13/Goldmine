@@ -21,6 +21,8 @@ const CUSTOMER_QUERY_COUNT = 10;
 const GROUNDING_QUERY_CONCURRENCY = Math.max(1, Number(process.env.GROUNDING_QUERY_CONCURRENCY || 8));
 const GROUNDING_QUERY_TIMEOUT_MS = Math.max(1_000, Number(process.env.GROUNDING_QUERY_TIMEOUT_MS || 18_000));
 const VISIBILITY_STAGE_TIMEOUT_MS = Math.max(1_000, Number(process.env.VISIBILITY_STAGE_TIMEOUT_MS || 55_000));
+const PLACES_REQUEST_TIMEOUT_MS = Math.max(1_000, Number(process.env.PLACES_REQUEST_TIMEOUT_MS || 8_000));
+const PLACES_MAX_PAGES = Math.max(1, Math.min(3, Number(process.env.PLACES_MAX_PAGES || 3)));
 const QUERY_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
 const firestoreProject = process.env.GOOGLE_CLOUD_PROJECT || process.env.GCLOUD_PROJECT;
 const firestore = firestoreProject ? new Firestore({ projectId: firestoreProject }) : null;
@@ -923,7 +925,7 @@ function computePercentileRanks(values: number[]): number[] {
 // -------------------------------------------------------------
 // Google Places API Pagination
 // -------------------------------------------------------------
-async function fetchPlacesPaginated(category: string, location: string, maxPages = 3): Promise<any[]> {
+async function fetchPlacesPaginated(category: string, location: string, maxPages = PLACES_MAX_PAGES): Promise<any[]> {
   const mapsApiKey = process.env.MAPS_API_KEY;
   if (!mapsApiKey) {
     throw new Error("MAPS_API_KEY environment variable is not configured.");
@@ -943,21 +945,21 @@ async function fetchPlacesPaginated(category: string, location: string, maxPages
   const query = location ? `${category} in ${location}` : category;
 
   for (let pageIdx = 0; pageIdx < maxPages; pageIdx++) {
-    if (pageIdx > 0) {
-      await new Promise((r) => setTimeout(r, 2000));
-    }
-
-    const payload: any = { textQuery: query };
+    const payload: any = { textQuery: query, pageSize: 20 };
     if (pageToken) {
       payload.pageToken = pageToken;
     }
 
     try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), PLACES_REQUEST_TIMEOUT_MS);
       const resp = await fetch(url, {
         method: "POST",
         headers,
         body: JSON.stringify(payload),
+        signal: controller.signal,
       });
+      clearTimeout(timeout);
 
       if (!resp.ok) {
         console.warn(`Places API returned status ${resp.status} on page ${pageIdx}`);
@@ -979,7 +981,7 @@ async function fetchPlacesPaginated(category: string, location: string, maxPages
       pageToken = data.nextPageToken;
       if (!pageToken) break;
     } catch (err) {
-      console.warn(`Error fetching places page ${pageIdx}:`, err);
+      console.warn(`Error fetching places page ${pageIdx} (capped at ${PLACES_REQUEST_TIMEOUT_MS}ms):`, err);
       break;
     }
   }

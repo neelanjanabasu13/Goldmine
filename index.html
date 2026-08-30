@@ -97,8 +97,9 @@
       .ring .fill{fill:none;stroke:var(--teal);stroke-width:9;stroke-linecap:round;
         transition:stroke-dashoffset .6s cubic-bezier(.2,.8,.2,1)}
       .ring .mid{position:absolute;inset:0;display:grid;place-items:center;text-align:center}
-      .ring .mid strong{font-family:'Bricolage Grotesque',sans-serif;font-size:26px;font-weight:800;
-        font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+      .ring .mid>div{max-width:118px}
+      .ring .mid strong{display:block;font-family:'Bricolage Grotesque',sans-serif;font-size:21px;font-weight:800;
+        font-variant-numeric:tabular-nums;letter-spacing:-.02em;line-height:1.05;overflow-wrap:anywhere}
       .ring .mid span{display:block;font-size:10px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:var(--faint);margin-top:3px}
       .elapsed{margin-top:14px;font-size:14px;color:var(--muted);font-variant-numeric:tabular-nums;font-weight:400}
 
@@ -276,7 +277,7 @@
             <div class="mid">
               <div>
                 <strong id="ringEtaText">~1:05</strong>
-                <span>remaining</span>
+                <span id="ringStateText">remaining</span>
               </div>
             </div>
           </div>
@@ -675,6 +676,7 @@
         const ringProgress = document.getElementById("ringProgress");
         ringProgress.style.strokeDashoffset = "477.5";
         document.getElementById("ringEtaText").textContent = `~${formatTime(estimatedTotalSec)}`;
+        document.getElementById("ringStateText").textContent = "remaining";
         document.getElementById("ringElapsedText").textContent = "0:00 elapsed";
 
         const agents = ["Discovery", "Quality", "Audit", "Visibility", "Competitor", "Scoring"];
@@ -697,6 +699,12 @@
 
             updateScanUi(doc);
 
+            if (doc.status === "error") {
+              clearInterval(pollInterval);
+              pollInterval = null;
+              return;
+            }
+
             // AUTO ROUTE TO RESULTS ON COMPLETION
             if (doc.status === "complete") {
               clearInterval(pollInterval);
@@ -714,7 +722,24 @@
 
       function updateScanUi(doc) {
         const elapsedSec = (Date.now() - startTime) / 1000;
-        document.getElementById("ringElapsedText").textContent = `${formatTime(elapsedSec)} elapsed`;
+        const elapsedEl = document.getElementById("ringElapsedText");
+        const ringEtaEl = document.getElementById("ringEtaText");
+        const ringStateEl = document.getElementById("ringStateText");
+
+        if (doc.status === "error") {
+          ringEtaEl.textContent = "Scan stopped";
+          ringStateEl.textContent = "check set-up";
+          elapsedEl.textContent = `${formatTime(elapsedSec)} elapsed · ${doc.error || "configuration needed"}`;
+          const activeAgent = document.getElementById("agentDiscovery");
+          const activeStatus = document.getElementById("agentDiscoveryStatus");
+          if (activeAgent && activeStatus) {
+            activeAgent.className = "agent failed";
+            activeStatus.textContent = "stopped";
+          }
+          return;
+        }
+
+        elapsedEl.textContent = `${formatTime(elapsedSec)} elapsed`;
 
         const totalEst = doc.estimated_total_sec || estimatedTotalSec || 45;
         const remainingSec = Math.max(0, totalEst - elapsedSec);
@@ -724,11 +749,13 @@
 
         if (elapsedSec > totalEst && doc.status !== "complete") {
           ringProgress.style.strokeDashoffset = "100";
-          document.getElementById("ringEtaText").textContent = "almost there";
+          ringEtaEl.textContent = "Finalising";
+          ringStateEl.textContent = "still working";
         } else {
           const progress = Math.min(elapsedSec / totalEst, 0.95);
           ringProgress.style.strokeDashoffset = String(circumference * (1 - progress));
-          document.getElementById("ringEtaText").textContent = `~${formatTime(remainingSec)}`;
+          ringEtaEl.textContent = `~${formatTime(remainingSec)}`;
+          ringStateEl.textContent = "remaining";
         }
 
         const stages = doc.stage_status || {};
