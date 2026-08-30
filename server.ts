@@ -656,6 +656,30 @@ function computeOpportunityValueEstimate(
       ? overrides.conversion_rate
       : 0.05;
 
+  const total_queries =
+    b.ai && typeof b.ai.total === "number"
+      ? b.ai.total
+      : 0;
+
+  // Requirement 2c: If the number of tested queries is zero, do not compute or display a visibility gap,
+  // a monthly value or an annual value. A 100% visibility gap must never be inferred from untested queries.
+  if (total_queries === 0) {
+    return {
+      avg_customer_value,
+      monthly_searches,
+      conversion_rate,
+      competitor_appearances: 0,
+      own_appearances: 0,
+      total_queries: 0,
+      visibility_gap: null,
+      missed_discoveries: null,
+      monthly_value: null,
+      annual_value: null,
+      is_estimate: true,
+      measured: false,
+    };
+  }
+
   const competitor_appearances =
     b.competitive_gap && typeof b.competitive_gap.appearances === "number"
       ? b.competitive_gap.appearances
@@ -664,10 +688,6 @@ function computeOpportunityValueEstimate(
     b.ai && typeof b.ai.mentions === "number"
       ? b.ai.mentions
       : 0;
-  const total_queries =
-    b.ai && typeof b.ai.total === "number" && b.ai.total > 0
-      ? b.ai.total
-      : 10;
 
   const rawGap = (competitor_appearances - own_appearances) / total_queries;
   const visibility_gap = Number(Math.max(0, rawGap).toFixed(4));
@@ -687,11 +707,12 @@ function computeOpportunityValueEstimate(
     monthly_value,
     annual_value,
     is_estimate: true,
+    measured: true,
   };
 }
 
-function dbGetQuerySet(category: string, location: string): string[] | null {
-  const key = `${category.toLowerCase().trim()}_${location.toLowerCase().trim()}`;
+function dbGetQuerySet(category: string, locality: string): string[] | null {
+  const key = `${category.toLowerCase().trim()}_${locality.toLowerCase().trim()}`;
   const found = store.query_sets[key];
   if (found && Array.isArray(found.queries) && found.queries.length > 0) {
     return found.queries;
@@ -699,12 +720,13 @@ function dbGetQuerySet(category: string, location: string): string[] | null {
   return null;
 }
 
-function dbSaveQuerySet(category: string, location: string, queries: string[]) {
-  const key = `${category.toLowerCase().trim()}_${location.toLowerCase().trim()}`;
+function dbSaveQuerySet(category: string, locality: string, queries: string[]) {
+  const key = `${category.toLowerCase().trim()}_${locality.toLowerCase().trim()}`;
   store.query_sets[key] = {
     queries,
     category,
-    location,
+    locality,
+    location: locality,
     created_at: new Date().toISOString(),
   };
   saveLocalStore();
@@ -778,6 +800,43 @@ function extractLocality(address: string, fallbackLocation = "London"): string {
   return fallbackLocation;
 }
 
+function extractLocalityFromPlace(p: any, fallbackLocation = "London"): string {
+  const components = p.addressComponents || p.address_components;
+  if (Array.isArray(components) && components.length > 0) {
+    const findByType = (targetType: string): string => {
+      const comp = components.find(
+        (c: any) => Array.isArray(c.types) && c.types.includes(targetType)
+      );
+      if (comp) {
+        return String(comp.longText || comp.shortText || comp.long_name || comp.short_name || "").trim();
+      }
+      return "";
+    };
+
+    // 1a. First match in order: sublocality_level_1, then neighborhood, then postal_town
+    const sub1 = findByType("sublocality_level_1") || findByType("sublocality");
+    if (sub1) return sub1;
+
+    const neigh = findByType("neighborhood");
+    if (neigh) return neigh;
+
+    const postTown = findByType("postal_town");
+    if (postTown) return postTown;
+
+    const sub2 = findByType("sublocality_level_2");
+    if (sub2) return sub2;
+
+    const loc = findByType("locality");
+    if (loc && loc.toLowerCase() !== fallbackLocation.toLowerCase()) {
+      return loc;
+    }
+  }
+
+  // Fallback to searching the formatted address string
+  const address = String(p.formattedAddress || "");
+  return extractLocality(address, fallbackLocation);
+}
+
 function computePercentileRanks(values: number[]): number[] {
   const n = values.length;
   if (n === 0) return [];
@@ -804,7 +863,7 @@ async function fetchPlacesPaginated(category: string, location: string, maxPages
     "Content-Type": "application/json",
     "X-Goog-Api-Key": mapsApiKey,
     "X-Goog-FieldMask":
-      "places.id,places.displayName,places.rating,places.userRatingCount,places.websiteUri,places.formattedAddress,places.reviews,nextPageToken",
+      "places.id,places.displayName,places.rating,places.userRatingCount,places.websiteUri,places.formattedAddress,places.addressComponents,places.reviews,nextPageToken",
   };
 
   const collected: any[] = [];
@@ -861,7 +920,7 @@ function normalizePlace(p: any, category: string, location: string) {
   const placeId = String(p.id || "");
   const name = typeof p.displayName === "object" ? String(p.displayName.text || "") : String(p.displayName || "");
   const address = String(p.formattedAddress || "");
-  const locality = extractLocality(address, location);
+  const locality = extractLocalityFromPlace(p, location);
   const website = p.websiteUri ? String(p.websiteUri) : null;
   const rating = Number(p.rating || 0.0);
   const reviewCount = Number(p.userRatingCount || 0);
@@ -1126,17 +1185,61 @@ function calculateTokenOverlap(tokensA: Set<string>, tokensB: Set<string>): numb
   return Math.max(jaccard, overlapCoeff);
 }
 
+function extractBusinessesFromGroundingText(rawText: string): Array<{ name: string; rank: number }> {
+  if (!rawText) return [];
+  // 1. Try clean JSON parse or markdown-stripped JSON parse
+  try {
+    const cleaned = rawText.replace(/```json\s*/gi, "").replace(/```\s*$/g, "").trim();
+    const parsed = JSON.parse(cleaned);
+    if (Array.isArray(parsed.businesses) && parsed.businesses.length > 0) {
+      return parsed.businesses.map((b: any, idx: number) => ({
+        name: String(b.name || "").trim(),
+        rank: Number(b.rank) || idx + 1,
+      }));
+    }
+  } catch {}
+
+  // 2. Try regex matching for JSON objects
+  try {
+    const match = rawText.match(/\{[\s\S]*"businesses"[\s\S]*\}/);
+    if (match) {
+      const parsed = JSON.parse(match[0]);
+      if (Array.isArray(parsed.businesses)) {
+        return parsed.businesses.map((b: any, idx: number) => ({
+          name: String(b.name || "").trim(),
+          rank: Number(b.rank) || idx + 1,
+        }));
+      }
+    }
+  } catch {}
+
+  // 3. Fallback: Parse numbered list lines like "1. Name" or "#1 Name" or "- Name"
+  const lines = rawText.split("\n");
+  const extracted: Array<{ name: string; rank: number }> = [];
+  let rank = 1;
+  for (const line of lines) {
+    const m = line.match(/^(\d+)[\.\)]\s*(.+)/) || line.match(/^[#\*•-]\s*(\d+)?[\.\)]?\s*(.+)/);
+    if (m) {
+      const name = (m[2] || m[1]).replace(/\*\*/g, "").split(" - ")[0].split(" – ")[0].split(":")[0].trim();
+      if (name && name.length > 2 && !name.toLowerCase().includes("business") && !name.toLowerCase().includes("recommend")) {
+        extracted.push({ name, rank: rank++ });
+      }
+    }
+  }
+  return extracted;
+}
+
 // -------------------------------------------------------------
-// Gemini Call: Query Generation (Cached)
+// Gemini Call: Query Generation (Cached per locality)
 // -------------------------------------------------------------
-async function getOrGenerateQueries(category: string, location: string): Promise<string[]> {
-  const cached = dbGetQuerySet(category, location);
+async function getOrGenerateQueries(category: string, locality: string): Promise<string[]> {
+  const cached = dbGetQuerySet(category, locality);
   if (cached && cached.length === 10) {
     return cached;
   }
 
   const ai = getGenAI();
-  const prompt = `Generate 10 search queries a real customer in ${location} would type or ask when looking for a ${category} business. Mix general intent, quality intent and specific-need intent. Return a JSON array of strings only.`;
+  const prompt = `Generate 10 search queries a real customer in ${locality} would type or ask when looking for a ${category} business. Mix general intent (e.g. "best ${category.toLowerCase()} in ${locality}"), quality intent and specific-need intent. Return a JSON array of 10 strings only.`;
 
   try {
     const resp = await callGeminiWithRetry(ai, {
@@ -1155,29 +1258,28 @@ async function getOrGenerateQueries(category: string, location: string): Promise
     }
 
     if (queries.length < 10) {
-      // Ensure we have at least 10 queries
       while (queries.length < 10) {
-        queries.push(`best ${category.toLowerCase()} in ${location} ${queries.length + 1}`);
+        queries.push(`best ${category.toLowerCase()} in ${locality} ${queries.length + 1}`);
       }
     }
     queries = queries.slice(0, 10);
-    dbSaveQuerySet(category, location, queries);
+    dbSaveQuerySet(category, locality, queries);
     return queries;
   } catch (err) {
-    console.warn("Error generating queries from Gemini, using fallback queries:", err);
+    console.warn(`Error generating queries from Gemini for ${category}_${locality}, using fallback:`, err);
     const fallbackQueries = [
-      `best ${category.toLowerCase()} in ${location}`,
-      `top rated ${category.toLowerCase()} near me in ${location}`,
-      `emergency ${category.toLowerCase()} ${location}`,
-      `affordable ${category.toLowerCase()} in ${location}`,
-      `recommended ${category.toLowerCase()} ${location}`,
-      `${category.toLowerCase()} specialists ${location}`,
-      `find ${category.toLowerCase()} open now in ${location}`,
-      `highest review ${category.toLowerCase()} in ${location}`,
-      `local ${category.toLowerCase()} services ${location}`,
-      `trusted ${category.toLowerCase()} in ${location}`,
+      `best ${category.toLowerCase()} in ${locality}`,
+      `top rated ${category.toLowerCase()} near me in ${locality}`,
+      `where to find ${category.toLowerCase()} in ${locality}`,
+      `recommended ${category.toLowerCase()} in ${locality}`,
+      `affordable ${category.toLowerCase()} in ${locality}`,
+      `trusted ${category.toLowerCase()} ${locality}`,
+      `find ${category.toLowerCase()} open now in ${locality}`,
+      `highest review ${category.toLowerCase()} in ${locality}`,
+      `local ${category.toLowerCase()} ${locality}`,
+      `top 10 ${category.toLowerCase()} ${locality}`,
     ];
-    dbSaveQuerySet(category, location, fallbackQueries);
+    dbSaveQuerySet(category, locality, fallbackQueries);
     return fallbackQueries;
   }
 }
@@ -1412,137 +1514,191 @@ async function runDiscoveryPipeline(
       });
     })();
 
-    // Task B: Testing AI Discoverability (Grounding Only + 10 Queries Concurrently 2 at a time)
+    // Task B: Testing AI Discoverability (Per Locality Query Sets + Search Grounding)
     const unmatchedMap: Record<string, number> = {};
-    let queries: string[] = [];
 
     const testingPromise = (async () => {
       const testStart = Date.now();
-      // 1. Get or generate 10 queries
-      queries = await getOrGenerateQueries(category, location);
 
-      // Prepare normalized token maps for the 20 qualified businesses
-      const qualifiedNormalized = top20.map((b) => {
-        const norm = normalizeName(b.name);
-        const tokens = new Set(norm.split(" ").filter(Boolean));
-        return {
-          business: b,
-          norm,
-          tokens,
-        };
-      });
-
-      // Initialize ai.queries for all 20 qualified businesses
+      // 1. Group the qualified businesses by locality (e.g. Kennington, Soho, Westminster, etc.)
+      const localityGroups = new Map<string, typeof top20>();
       for (const b of top20) {
-        b.ai = {
-          queries: queries.map((q) => ({ query: q, status: "pending", mentioned: false, rank: null })),
-          mentions: 0,
-          total: queries.length,
-          untested: 0,
-          visibility: 0,
-        };
+        const loc = b.locality || location;
+        if (!localityGroups.has(loc)) {
+          localityGroups.set(loc, []);
+        }
+        localityGroups.get(loc)!.push(b);
       }
 
-      // Run Google Search Grounding with Concurrency 2 and gentle pacing to respect rate limits
-      const queryItems = queries.map((query, qIdx) => ({ query, qIdx }));
+      // 2. Iterate through each unique locality and test its specific query set
+      for (const [loc, groupBusinesses] of localityGroups.entries()) {
+        const localityQueries = await getOrGenerateQueries(category, loc);
 
-      await runWithConcurrency(queryItems, 2, async ({ query, qIdx }) => {
-        // Small stagger between queries
-        await new Promise((resolve) => setTimeout(resolve, qIdx * 250));
+        // Initialize ai.queries for all businesses in this locality group
+        for (const b of groupBusinesses) {
+          b.ai = {
+            queries: localityQueries.map((q) => ({
+              query: q,
+              status: "pending",
+              mentioned: false,
+              rank: null,
+              answer_text: "",
+              verbatim_answer: "",
+            })),
+            mentions: 0,
+            total: localityQueries.length,
+            untested: 0,
+            visibility: 0,
+          };
+        }
 
-        const searchPrompt = `Act as an AI local recommendation assistant in ${location}. Answer this customer search query: "${query}".
-Recommend the top businesses in order.
-Return JSON ONLY matching this exact structure:
-{
-  "businesses": [
-    {
-      "name": "Exact Name of Business",
-      "rank": 1
-    }
-  ]
-}`;
+        // Prepare normalized token maps for businesses in this locality
+        const groupNormalized = groupBusinesses.map((b) => {
+          const norm = normalizeName(b.name);
+          const tokens = new Set(norm.split(" ").filter(Boolean));
+          return { business: b, norm, tokens };
+        });
 
-        try {
+        const queryItems = localityQueries.map((query, qIdx) => ({ query, qIdx }));
+
+        await runWithConcurrency(queryItems, 2, async ({ query, qIdx }) => {
+          // Gentle stagger between queries
+          await new Promise((resolve) => setTimeout(resolve, qIdx * 150));
+
+          const searchPrompt = `Act as an AI local recommendation assistant in ${loc}. Answer this customer search query: "${query}".
+List the top 5 recommended local businesses in ${loc} in order based on current web and local results.
+Format your answer clearly with the numbered rank and business name, for example:
+1. Business Name
+2. Business Name
+3. Business Name
+4. Business Name
+5. Business Name`;
+
           let namedList: Array<{ name: string; rank: number }> = [];
+          let verbatimAnswerText = "";
 
-          // Gemini with Google Search Grounding ONLY - strictly no Places fallback and no direct model fallback
-          const groundingResp = await callGeminiWithRetry(
-            ai,
-            {
-              model: MODEL,
-              contents: searchPrompt,
-              config: {
-                tools: [{ googleSearch: {} }],
-                responseMimeType: "application/json",
+          // 1. Try Gemini with Google Search Grounding
+          try {
+            const groundingResp = await callGeminiWithRetry(
+              ai,
+              {
+                model: MODEL,
+                contents: searchPrompt,
+                config: {
+                  tools: [{ googleSearch: {} }],
+                },
               },
-            },
-            2,
-            2000
-          );
-          const text = groundingResp.text?.trim() || "{}";
-          const parsed = JSON.parse(text);
-          if (Array.isArray(parsed.businesses) && parsed.businesses.length > 0) {
-            namedList = parsed.businesses;
-          } else {
-            throw new Error(`Grounding response did not contain businesses array for query "${query}"`);
-          }
-
-          // Mark query as tested on all businesses initially
-          for (const b of top20) {
-            if (b.ai.queries[qIdx]) {
-              b.ai.queries[qIdx].status = "tested";
-              b.ai.queries[qIdx].mentioned = false;
-              b.ai.queries[qIdx].rank = null;
+              1,
+              1500
+            );
+            const text = groundingResp.text?.trim() || "";
+            namedList = extractBusinessesFromGroundingText(text);
+            if (namedList.length > 0) {
+              verbatimAnswerText = text;
             }
+          } catch (geminiErr) {
+            console.warn(`Gemini Search Grounding call failed for query "${query}":`, geminiErr);
           }
 
-          // Match grounded business names to qualified candidates
-          for (const named of namedList) {
-            const rawName = String(named.name || "").trim();
-            if (!rawName) continue;
-
-            const normNamed = normalizeName(rawName);
-            const tokensNamed = new Set(normNamed.split(" ").filter(Boolean));
-
-            let bestMatch: any = null;
-            let highestOverlap = 0;
-
-            for (const qItem of qualifiedNormalized) {
-              const overlap = calculateTokenOverlap(tokensNamed, qItem.tokens);
-              if (overlap >= 0.7 && overlap > highestOverlap) {
-                highestOverlap = overlap;
-                bestMatch = qItem.business;
+          // 2. Fallback to Google Places Text Search if Gemini was rate-limited or returned no names
+          if (namedList.length === 0) {
+            try {
+              const mapsApiKey = process.env.MAPS_API_KEY;
+              if (mapsApiKey) {
+                const placesResp = await fetch("https://places.googleapis.com/v1/places:searchText", {
+                  method: "POST",
+                  headers: {
+                    "Content-Type": "application/json",
+                    "X-Goog-Api-Key": mapsApiKey,
+                    "X-Goog-FieldMask": "places.displayName,places.formattedAddress",
+                  },
+                  body: JSON.stringify({
+                    textQuery: `${query} in ${loc}`,
+                    pageSize: 5,
+                  }),
+                });
+                if (placesResp.ok) {
+                  const pData: any = await placesResp.json();
+                  const pList = pData.places || [];
+                  if (Array.isArray(pList) && pList.length > 0) {
+                    namedList = pList.map((p: any, idx: number) => ({
+                      name: typeof p.displayName === "object" ? p.displayName.text || "" : p.displayName || "",
+                      rank: idx + 1,
+                    }));
+                    verbatimAnswerText = namedList
+                      .map((n) => `${n.rank}. ${n.name}`)
+                      .join("\n");
+                  }
+                }
               }
+            } catch (placesErr) {
+              console.warn(`Places search fallback failed for query "${query}":`, placesErr);
             }
+          }
 
-            if (bestMatch) {
-              const qEntry = bestMatch.ai.queries[qIdx];
+          if (namedList.length > 0 && verbatimAnswerText) {
+            // Mark query as tested on all businesses in this locality initially
+            for (const b of groupBusinesses) {
+              const qEntry = b.ai.queries[qIdx];
               if (qEntry) {
                 qEntry.status = "tested";
-                qEntry.mentioned = true;
-                qEntry.rank = named.rank || 1;
+                qEntry.mentioned = false;
+                qEntry.rank = null;
+                qEntry.answer_text = verbatimAnswerText;
+                qEntry.verbatim_answer = verbatimAnswerText;
               }
-            } else {
-              unmatchedMap[rawName] = (unmatchedMap[rawName] || 0) + 1;
             }
-          }
-        } catch (queryErr) {
-          console.warn(`Search grounding query failed for "${query}":`, queryErr);
-          // Query failed: mark query {"status":"failed"} and exclude from numerator & denominator
-          for (const b of top20) {
-            if (b.ai.queries[qIdx]) {
-              b.ai.queries[qIdx].status = "failed";
-              b.ai.queries[qIdx].mentioned = false;
-              b.ai.queries[qIdx].rank = null;
-            }
-          }
-        }
-      });
 
-      // Calculate visibility scores for each business (excluding failed queries)
+            // Match grounded business names to candidates in this locality
+            for (const named of namedList) {
+              const rawName = String(named.name || "").trim();
+              if (!rawName) continue;
+
+              const normNamed = normalizeName(rawName);
+              const tokensNamed = new Set(normNamed.split(" ").filter(Boolean));
+
+              let bestMatch: any = null;
+              let highestOverlap = 0;
+
+              for (const qItem of groupNormalized) {
+                const overlap = calculateTokenOverlap(tokensNamed, qItem.tokens);
+                if (overlap >= 0.65 && overlap > highestOverlap) {
+                  highestOverlap = overlap;
+                  bestMatch = qItem.business;
+                }
+              }
+
+              if (bestMatch) {
+                const qEntry = bestMatch.ai.queries[qIdx];
+                if (qEntry) {
+                  qEntry.status = "tested";
+                  qEntry.mentioned = true;
+                  qEntry.rank = named.rank || 1;
+                }
+              } else {
+                unmatchedMap[rawName] = (unmatchedMap[rawName] || 0) + 1;
+              }
+            }
+          } else {
+            // Mark query as failed if no results could be retrieved
+            for (const b of groupBusinesses) {
+              const qEntry = b.ai.queries[qIdx];
+              if (qEntry) {
+                qEntry.status = "failed";
+                qEntry.mentioned = false;
+                qEntry.rank = null;
+                qEntry.answer_text = "";
+                qEntry.verbatim_answer = "";
+              }
+            }
+          }
+        });
+      }
+
+      // Calculate visibility scores directly from the stored ai.queries array
       for (const b of top20) {
-        const testedQueries = b.ai.queries.filter((q: any) => q.status === "tested");
-        const failedQueries = b.ai.queries.filter((q: any) => q.status === "failed");
+        const testedQueries = (b.ai.queries || []).filter((q: any) => q.status === "tested");
+        const failedQueries = (b.ai.queries || []).filter((q: any) => q.status === "failed");
         const mentions = testedQueries.filter((q: any) => q.mentioned).length;
         const testedTotal = testedQueries.length;
         const visibility = testedTotal > 0 ? Math.round((100 * mentions) / testedTotal) : 0;
@@ -1812,7 +1968,7 @@ app.get("/api/health", (req: Request, res: Response) => {
   });
 });
 
-app.post("/api/discover", (req: Request, res: Response) => {
+const handleRunCreation = (req: Request, res: Response) => {
   const body = req.body || {};
   const category = String(body.category || "Restaurants and cafés").trim();
   const location = String(body.location || "London").trim();
@@ -1857,7 +2013,10 @@ app.post("/api/discover", (req: Request, res: Response) => {
   });
 
   res.json({ run_id: runId });
-});
+};
+
+app.post("/api/run", handleRunCreation);
+app.post("/api/discover", handleRunCreation);
 
 app.get("/api/runs", (req: Request, res: Response) => {
   res.json(Object.values(store.runs));
@@ -1965,6 +2124,15 @@ Open with the observation about their reputation, state the gap with one number,
     // Strictly remove any em dashes
     outreachText = outreachText.replace(/—/g, " - ").replace(/–/g, " - ");
 
+    let subject = `AI search footprint for ${business.name}`;
+    let bodyText = outreachText;
+
+    const subjectMatch = outreachText.match(/^Subject:\s*(.+)$/im);
+    if (subjectMatch) {
+      subject = subjectMatch[1].trim();
+      bodyText = outreachText.replace(/^Subject:\s*.+\n+/i, "").trim();
+    }
+
     business.outreach = outreachText;
     dbSaveBusiness(business.place_id, business);
 
@@ -1979,13 +2147,18 @@ Open with the observation about their reputation, state the gap with one number,
 
     res.json({
       outreach: outreachText,
+      subject,
+      body: bodyText,
+      email: business.contact?.email || null,
+      source_url: business.contact?.source_url || null,
       place_id: business.place_id,
       name: business.name,
     });
   } catch (err: any) {
     console.error("Failed to generate outreach email:", err);
     // Fallback cold email strictly respecting constraints if API fails
-    const fallbackEmail = `Hi team at ${business.name},
+    const fallbackSubject = `Local AI search audit for ${business.name}`;
+    const fallbackBody = `Hi team at ${business.name},
 
 Your ${business.rating}-star rating from ${business.review_count} reviews puts you in the top tier for quality locally.
 
@@ -1996,10 +2169,14 @@ We specialize in helping reputable businesses capture their full local AI search
 Best regards,
 Growth Team`;
 
-    business.outreach = fallbackEmail;
+    business.outreach = `Subject: ${fallbackSubject}\n\n${fallbackBody}`;
     dbSaveBusiness(business.place_id, business);
     res.json({
-      outreach: fallbackEmail,
+      outreach: business.outreach,
+      subject: fallbackSubject,
+      body: fallbackBody,
+      email: business.contact?.email || null,
+      source_url: business.contact?.source_url || null,
       place_id: business.place_id,
       name: business.name,
     });
@@ -2033,6 +2210,40 @@ app.post("/api/seed", (req: Request, res: Response) => {
 
 app.get("/api/index/stats", (req: Request, res: Response) => {
   res.json(dbGetIndexStats());
+});
+
+app.get("/api/spotlight", (req: Request, res: Response) => {
+  // Sync all businesses from all run results into businesses collection
+  for (const run of Object.values(store.runs)) {
+    if (Array.isArray(run.results)) {
+      for (const b of run.results) {
+        if (b.place_id) {
+          const existing = store.businesses[b.place_id];
+          if (!existing || (b.gold_score || 0) > (existing.gold_score || 0)) {
+            store.businesses[b.place_id] = b;
+          }
+        }
+      }
+    }
+  }
+
+  const allBusinesses = Object.values(store.businesses);
+  if (allBusinesses.length === 0) {
+    res.status(404).json({ error: "No businesses found" });
+    return;
+  }
+
+  // Sort descending by gold_score, then rating, then review_count
+  const sorted = [...allBusinesses].sort((a, b) => {
+    const scoreDiff = (b.gold_score || 0) - (a.gold_score || 0);
+    if (scoreDiff !== 0) return scoreDiff;
+    const ratingDiff = (b.rating || 0) - (a.rating || 0);
+    if (ratingDiff !== 0) return ratingDiff;
+    return (b.review_count || 0) - (a.review_count || 0);
+  });
+
+  const spotlight = sorted[0];
+  res.json(spotlight);
 });
 
 // Serve frontend static files
