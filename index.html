@@ -222,8 +222,8 @@
           <input
             id="inputLocation"
             type="text"
-            value="London"
-            placeholder="Location (e.g. London)"
+            value="Soho, London"
+            placeholder="Borough, neighbourhood or postcode (e.g. Soho, London)"
           />
           <select id="selectCategory">
             <option value="Restaurants and cafés" selected>Restaurants and cafés</option>
@@ -661,7 +661,8 @@
           });
 
           if (!resp.ok) {
-            alert("Could not start discovery run. Please try again.");
+            const errorData = await resp.json().catch(() => ({}));
+            alert(errorData.error || "Could not start discovery run. Please try again.");
             showView("landing");
             return;
           }
@@ -847,13 +848,14 @@
         });
 
         document.getElementById("resultsHeadline").textContent =
-          `Goldmine assessed ${results.length} Google Places candidates in ${category}, ${location}`;
+          `Goldmine found ${results.length} eligible prospects in ${category}, ${location}`;
 
         const discovery = runDoc.discovery || {};
         const returned = Number(discovery.candidates_returned || runDoc.stage_counts?.discovering || results.length);
         const source = discovery.source || "Google Places Text Search";
+        const excludedMultiLocation = Number(discovery.excluded_multi_location_candidates || runDoc.stage_counts?.excluded_multi_location || 0);
         document.getElementById("resultsScope").textContent =
-          `${source} returned ${returned} candidates for this scan. This is a candidate cohort, not a complete market census or a Google search/ad ranking.`;
+          `${source} returned ${returned} candidates in the requested area. ${excludedMultiLocation} multi-location brand record${excludedMultiLocation === 1 ? " was" : "s were"} excluded from prospect scoring. This is a candidate cohort, not a complete market census or a Google search/ad ranking.`;
 
         const tbody = document.getElementById("resultsTableBody");
         tbody.innerHTML = "";

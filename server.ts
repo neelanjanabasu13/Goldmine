@@ -18,6 +18,7 @@ app.use(express.json({ limit: "10mb" }));
 const MODEL = process.env.GEMINI_MODEL || "gemini-3.7-flash";
 const FALLBACK_MODELS = [MODEL, "gemini-3.7-flash", "gemini-3.1-flash-lite", "gemini-flash-latest"];
 const CUSTOMER_QUERY_COUNT = 10;
+const MAX_AUDIT_CANDIDATES = 10;
 const GROUNDING_QUERY_CONCURRENCY = Math.max(1, Number(process.env.GROUNDING_QUERY_CONCURRENCY || 8));
 const GROUNDING_QUERY_TIMEOUT_MS = Math.max(1_000, Number(process.env.GROUNDING_QUERY_TIMEOUT_MS || 18_000));
 const VISIBILITY_STAGE_TIMEOUT_MS = Math.max(1_000, Number(process.env.VISIBILITY_STAGE_TIMEOUT_MS || 55_000));
@@ -1144,6 +1145,67 @@ function normalizePlace(p: any, category: string, location: string) {
   };
 }
 
+const GENERIC_WEBSITE_DOMAINS = new Set([
+  "opentable.com", "resy.com", "tripadvisor.com", "facebook.com", "instagram.com",
+  "deliveroo.co.uk", "ubereats.com", "justeat.co.uk", "booking.com",
+]);
+
+function domainBrandKey(website: string | null | undefined): string | null {
+  if (!website) return null;
+  try {
+    const hostname = new URL(website).hostname.toLowerCase().replace(/^www\./, "");
+    if (!hostname || GENERIC_WEBSITE_DOMAINS.has(hostname)) return null;
+    return `domain:${hostname}`;
+  } catch {
+    return null;
+  }
+}
+
+function nameBrandKey(name: string): string | null {
+  const ignored = new Set(["the", "a", "an", "restaurant", "cafe", "café", "bar", "grill", "kitchen", "food"]);
+  const token = normalizeName(name).split(" ").find((part) => part.length >= 4 && !ignored.has(part));
+  return token ? `name:${token}` : null;
+}
+
+function annotateMultiLocationBrands(businesses: any[]) {
+  const domainCounts = new Map<string, number>();
+  const nameCounts = new Map<string, number>();
+
+  for (const business of businesses) {
+    const domainKey = domainBrandKey(business.website);
+    const nameKey = nameBrandKey(business.name || "");
+    if (domainKey) domainCounts.set(domainKey, (domainCounts.get(domainKey) || 0) + 1);
+    if (nameKey) nameCounts.set(nameKey, (nameCounts.get(nameKey) || 0) + 1);
+  }
+
+  for (const business of businesses) {
+    const domainKey = domainBrandKey(business.website);
+    const nameKey = nameBrandKey(business.name || "");
+    const brandKey = domainKey || nameKey;
+    const groupSize = Math.max(domainKey ? domainCounts.get(domainKey) || 0 : 0, nameKey ? nameCounts.get(nameKey) || 0 : 0);
+    const multiLocation = groupSize > 1;
+    business.discovery = {
+      ...(business.discovery || {}),
+      brand_key: brandKey,
+      brand_group_size: groupSize || 1,
+      outreach_eligible: !multiLocation,
+      exclusion_reason: multiLocation ? "Multiple locations for the same brand were returned in this candidate cohort." : null,
+    };
+  }
+}
+
+function isBroadMarketLocation(location: string): boolean {
+  const normalized = location.toLowerCase().replace(/\s+/g, " ").trim();
+  return ["london", "greater london", "uk", "united kingdom", "england"].includes(normalized)
+    || /^london,?\s*(uk|united kingdom|england)$/.test(normalized);
+}
+
+function requireBoundedLocation(location: string) {
+  if (isBroadMarketLocation(location)) {
+    throw new Error("Choose a borough, neighbourhood or postcode district (for example, Soho, London or W1) rather than the whole of London. Google Places returns a capped candidate cohort, not a city-wide market census.");
+  }
+}
+
 function computeQualityAndFilter(businesses: any[]): any[] {
   // Drop anything under 20 reviews
   const qualified = businesses.filter((b) => (b.review_count || 0) >= 20);
@@ -1577,7 +1639,10 @@ async function runDiscoveryPipeline(
       stage_durations_sec: { ...stageTimings },
     });
 
-    const rawPlaces = await fetchPlacesPaginated(category, location, 3);
+    // A Places Text Search is capped at 60 results. The input must therefore
+    // be a bounded prospecting area, not an entire city presented as a market.
+    requireBoundedLocation(location);
+    const rawPlaces = await fetchPlacesPaginated(category, location, PLACES_MAX_PAGES);
     const normalized = rawPlaces.map((p) => normalizePlace(p, category, location));
     const candidatesCount = normalized.length;
     const discoveryQuery = `${category} in ${location}`;
@@ -1587,8 +1652,10 @@ async function runDiscoveryPipeline(
         query: discoveryQuery,
         candidates_returned: candidatesCount,
         market_coverage: "candidate_cohort_not_market_census",
+        scope: location,
       };
     }
+    annotateMultiLocationBrands(normalized);
     stageTimings.discovering = Number(((Date.now() - stageStart) / 1000).toFixed(2));
 
     // ---------------------------------------------------------
@@ -1613,9 +1680,11 @@ async function runDiscoveryPipeline(
       stage_durations_sec: { ...stageTimings },
     });
 
-    const top20 = computeQualityAndFilter(normalized);
-    const qualifiedCount = top20.length;
-    const auditCandidates = top20.slice(0, 10);
+    const qualified = computeQualityAndFilter(normalized);
+    const top20 = qualified.filter((business) => business.discovery?.outreach_eligible !== false);
+    const qualifiedCount = qualified.length;
+    const excludedMultiLocationCount = qualifiedCount - top20.length;
+    const auditCandidates = top20.slice(0, MAX_AUDIT_CANDIDATES);
 
     // Persist candidate records concurrently. Serial writes would turn the
     // durable store itself into the scan bottleneck.
@@ -1639,6 +1708,8 @@ async function runDiscoveryPipeline(
       stage_counts: {
         discovering: candidatesCount,
         qualifying: qualifiedCount,
+        outreach_eligible: top20.length,
+        excluded_multi_location: excludedMultiLocationCount,
       },
       stage_timings: { ...stageTimings },
       stage_durations_sec: { ...stageTimings },
@@ -1649,8 +1720,9 @@ async function runDiscoveryPipeline(
 
     let auditedOpportunities = 0;
 
-    // Task A: Audit only the highest-quality ten businesses. Visibility still tests
-    // the full qualified set, but PageSpeed and contact crawling are the costly work.
+    // Task A: audit only the highest-quality eligible businesses. PageSpeed and
+    // contact crawling are the costly work; the full eligible cohort still gets
+    // the same ten-query visibility measurement below.
     const auditPromise = (async () => {
       const auditStart = Date.now();
       await runWithConcurrency(auditCandidates, 10, async (b) => {
@@ -1773,26 +1845,22 @@ async function runDiscoveryPipeline(
       });
     })();
 
-    // Task B: Testing AI Discoverability (Per Locality Query Sets + Search Grounding)
+    // Task B: Testing AI Discoverability (one scoped query set + Search Grounding)
     const unmatchedMap: Record<string, number> = {};
 
     const testingPromise = (async () => {
       const testStart = Date.now();
 
-      // 1. Group the qualified businesses by locality (e.g. Kennington, Soho, Westminster, etc.)
-      const localityGroups = new Map<string, typeof top20>();
-      for (const b of top20) {
-        const loc = b.locality || location;
-        if (!localityGroups.has(loc)) {
-          localityGroups.set(loc, []);
-        }
-        localityGroups.get(loc)!.push(b);
-      }
-
-      // 2. Build all locality-specific query jobs first, then apply one global
-      // concurrency limit. Nested pools can accidentally serialize whole areas.
-      const groups = await runWithConcurrency(
-        Array.from(localityGroups.entries()),
+      // The ten customer queries must measure the exact area the user asked
+      // about. Running a separate ten-query set for every locality returned by
+      // Places both changes the question and explodes latency/cost.
+      const groups = await runWithConcurrency<[string, typeof top20], {
+        loc: string;
+        groupBusinesses: typeof top20;
+        groupNormalized: Array<{ business: any; tokens: Set<string> }>;
+        localityQueries: string[];
+      }>(
+        [[location, top20]],
         4,
         async ([loc, groupBusinesses]) => {
           const localityQueries = await getOrGenerateQueries(category, loc);
@@ -1933,9 +2001,9 @@ async function runDiscoveryPipeline(
           ...(currentDoc?.stage_status || {}),
           testing: "done",
         },
-        stage_counts: {
-          ...(currentDoc?.stage_counts || {}),
-          testing: top20.length,
+      stage_counts: {
+        ...(currentDoc?.stage_counts || {}),
+        testing: top20.length,
         },
         stage_timings: { ...stageTimings },
         stage_durations_sec: { ...stageTimings },
@@ -2120,6 +2188,8 @@ async function runDiscoveryPipeline(
       stage_counts: {
         discovering: candidatesCount,
         qualifying: qualifiedCount,
+        outreach_eligible: top20.length,
+        excluded_multi_location: excludedMultiLocationCount,
         auditing: auditedOpportunities || qualifiedCount,
         testing: top20.length,
         comparing: resolvedCompetitors.length,
@@ -2135,6 +2205,9 @@ async function runDiscoveryPipeline(
         query: discoveryQuery,
         candidates_returned: candidatesCount,
         qualified_candidates: qualifiedCount,
+        outreach_eligible_candidates: top20.length,
+        excluded_multi_location_candidates: excludedMultiLocationCount,
+        scope: location,
         market_coverage: "candidate_cohort_not_market_census",
       },
       results: top20,
@@ -2177,6 +2250,13 @@ const handleRunCreation = async (req: Request, res: Response) => {
   const category = String(body.category || "Restaurants and cafés").trim();
   const location = String(body.location || "London").trim();
   const services = String(body.services || "SEO, websites and AI visibility").trim();
+
+  try {
+    requireBoundedLocation(location);
+  } catch (err: any) {
+    res.status(400).json({ error: String(err?.message || err) });
+    return;
+  }
 
   const options = {
     avg_customer_value: body.avg_customer_value ? Number(body.avg_customer_value) : undefined,
