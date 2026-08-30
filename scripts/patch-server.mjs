@@ -44,8 +44,8 @@ replaceOnce(
 // If grounding fails, preserve a failed/untested query instead of substituting Places results.
 replaceRegexOnce(
   "Places fallback for AI visibility",
-  /\n\s*\/\/ 2\. Fallback to Google Places Text Search if Gemini was rate-limited or returned no names[\s\S]*?\n\s*if \(namedList\.length > 0 && verbatimAnswerText\) \{/,
-  "\n\n          if (namedList.length > 0 && verbatimAnswerText) {"
+  /\n\s*\/\/ 2\. Fallback to Google Places Text Search if Gemini was rate-limited or returned no names[\s\S]*?\n\s*if \(verbatimAnswerText\) \{/,
+  "\n\n          if (verbatimAnswerText) {"
 );
 
 // Remove unnecessary artificial query staggering. Concurrency control above is sufficient.

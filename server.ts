@@ -1256,12 +1256,12 @@ function extractBusinessesFromGroundingText(rawText: string): Array<{ name: stri
 // -------------------------------------------------------------
 async function getOrGenerateQueries(category: string, locality: string): Promise<string[]> {
   const cached = dbGetQuerySet(category, locality);
-  if (cached && cached.length === 10) {
+  if (cached && cached.length === 6) {
     return cached;
   }
 
   const ai = getGenAI();
-  const prompt = `Generate 10 search queries a real customer in ${locality} would type or ask when looking for a ${category} business. Mix general intent (e.g. "best ${category.toLowerCase()} in ${locality}"), quality intent and specific-need intent. Return a JSON array of 10 strings only.`;
+  const prompt = `Generate 6 search queries a real customer in ${locality} would type or ask when looking for a ${category} business. Mix general intent (e.g. "best ${category.toLowerCase()} in ${locality}"), quality intent and specific-need intent. Return a JSON array of 6 strings only.`;
 
   try {
     const resp = await callGeminiWithRetry(ai, {
@@ -1279,12 +1279,12 @@ async function getOrGenerateQueries(category: string, locality: string): Promise
       queries = parsed.map((s) => String(s)).filter((s) => s.length > 0);
     }
 
-    if (queries.length < 10) {
-      while (queries.length < 10) {
+    if (queries.length < 6) {
+      while (queries.length < 6) {
         queries.push(`best ${category.toLowerCase()} in ${locality} ${queries.length + 1}`);
       }
     }
-    queries = queries.slice(0, 10);
+    queries = queries.slice(0, 6);
     dbSaveQuerySet(category, locality, queries);
     return queries;
   } catch (err) {
@@ -1296,10 +1296,6 @@ async function getOrGenerateQueries(category: string, locality: string): Promise
       `recommended ${category.toLowerCase()} in ${locality}`,
       `affordable ${category.toLowerCase()} in ${locality}`,
       `trusted ${category.toLowerCase()} ${locality}`,
-      `find ${category.toLowerCase()} open now in ${locality}`,
-      `highest review ${category.toLowerCase()} in ${locality}`,
-      `local ${category.toLowerCase()} ${locality}`,
-      `top 10 ${category.toLowerCase()} ${locality}`,
     ];
     dbSaveQuerySet(category, locality, fallbackQueries);
     return fallbackQueries;
@@ -1374,6 +1370,7 @@ async function runDiscoveryPipeline(
 
     const top20 = computeQualityAndFilter(normalized);
     const qualifiedCount = top20.length;
+    const auditCandidates = top20.slice(0, 10);
 
     // Persist all candidates and qualified businesses
     for (const b of top20) {
@@ -1413,10 +1410,11 @@ async function runDiscoveryPipeline(
 
     let auditedOpportunities = 0;
 
-    // Task A: Digital Audit (PageSpeed + Website Analysis on Top 20) with concurrency 20
+    // Task A: Audit only the highest-quality ten businesses. Visibility still tests
+    // the full qualified set, but PageSpeed and contact crawling are the costly work.
     const auditPromise = (async () => {
       const auditStart = Date.now();
-      await runWithConcurrency(top20, 20, async (b) => {
+      await runWithConcurrency(auditCandidates, 10, async (b) => {
         let homepageText = "";
 
         // 1. PageSpeed & Digital Audit
@@ -1529,7 +1527,7 @@ async function runDiscoveryPipeline(
         },
         stage_counts: {
           ...(currentDoc?.stage_counts || {}),
-          auditing: auditedOpportunities || qualifiedCount,
+          auditing: auditedOpportunities || auditCandidates.length,
         },
         stage_timings: { ...stageTimings },
         stage_durations_sec: { ...stageTimings },
@@ -1614,10 +1612,11 @@ Format your answer clearly with the numbered rank and business name, for example
               1500
             );
             const text = groundingResp.text?.trim() || "";
+            // A grounded answer is a completed test even when its format does not
+            // let us extract a ranked list. Persist it and record a miss rather
+            // than presenting the query as untested in the audit.
+            verbatimAnswerText = text;
             namedList = extractBusinessesFromGroundingText(text);
-            if (namedList.length > 0) {
-              verbatimAnswerText = text;
-            }
           } catch (geminiErr) {
             console.warn(`Gemini Search Grounding call failed for query "${query}":`, geminiErr);
           }
@@ -1658,7 +1657,7 @@ Format your answer clearly with the numbered rank and business name, for example
             }
           }
 
-          if (namedList.length > 0 && verbatimAnswerText) {
+          if (verbatimAnswerText) {
             // Mark query as tested on all businesses in this locality initially
             for (const b of groupBusinesses) {
               const qEntry = b.ai.queries[qIdx];
