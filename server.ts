@@ -9,7 +9,8 @@ import dotenv from "dotenv";
 dotenv.config();
 
 const app = express();
-const PORT = 3000;
+// Cloud Run supplies PORT=8080; local development continues to use 3000.
+const PORT = Number(process.env.PORT || 3000);
 
 app.use(express.json({ limit: "10mb" }));
 
