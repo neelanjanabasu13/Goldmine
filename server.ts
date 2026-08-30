@@ -1,7 +1,9 @@
 import express, { Request, Response } from "express";
 import path from "path";
 import fs from "fs";
+import crypto from "crypto";
 import { GoogleGenAI, Type } from "@google/genai";
+import { Firestore } from "@google-cloud/firestore";
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -14,27 +16,27 @@ app.use(express.json({ limit: "10mb" }));
 // Model constants
 const MODEL = process.env.GEMINI_MODEL || "gemini-3.7-flash";
 const FALLBACK_MODELS = [MODEL, "gemini-3.7-flash", "gemini-3.1-flash-lite", "gemini-flash-latest"];
+const CUSTOMER_QUERY_COUNT = 10;
+const GROUNDING_QUERY_CONCURRENCY = Math.max(1, Number(process.env.GROUNDING_QUERY_CONCURRENCY || 8));
+const GROUNDING_QUERY_TIMEOUT_MS = Math.max(1_000, Number(process.env.GROUNDING_QUERY_TIMEOUT_MS || 20_000));
+const VISIBILITY_STAGE_TIMEOUT_MS = Math.max(1_000, Number(process.env.VISIBILITY_STAGE_TIMEOUT_MS || 90_000));
+const QUERY_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
+const firestoreProject = process.env.GOOGLE_CLOUD_PROJECT || process.env.GCLOUD_PROJECT;
+const firestore = firestoreProject ? new Firestore({ projectId: firestoreProject }) : null;
 
 // Gemini client initialization
 function getGenAI(): GoogleGenAI {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (apiKey) {
-    return new GoogleGenAI({
-      apiKey,
-      httpOptions: {
-        headers: {
-          "User-Agent": "aistudio-build",
-        },
-      },
-    });
+  const project = process.env.GOOGLE_CLOUD_PROJECT || process.env.GCLOUD_PROJECT;
+  if (!project) {
+    throw new Error("GOOGLE_CLOUD_PROJECT is required for Vertex AI");
   }
   return new GoogleGenAI({
     vertexai: true,
-    project: process.env.GOOGLE_CLOUD_PROJECT || process.env.GCLOUD_PROJECT,
-    location: process.env.GOOGLE_CLOUD_LOCATION || process.env.VERTEX_LOCATION || "us-central1",
+    project,
+    location: process.env.GOOGLE_CLOUD_LOCATION || process.env.VERTEX_LOCATION || "europe-west1",
     httpOptions: {
       headers: {
-        "User-Agent": "aistudio-build",
+        "User-Agent": "goldmine-cloud-run",
       },
     },
   });
@@ -182,7 +184,7 @@ const DATA_STORE_FILE = path.join(process.cwd(), "data_store.json");
 interface DataStore {
   runs: Record<string, any>;
   businesses: Record<string, any>;
-  query_sets: Record<string, { queries: string[]; category: string; location: string; created_at: string }>;
+  query_sets: Record<string, { queries: string[]; category: string; locality: string; location: string; created_at: string }>;
 }
 
 let store: DataStore = {
@@ -732,6 +734,74 @@ function dbSaveQuerySet(category: string, locality: string, queries: string[]) {
   saveLocalStore();
 }
 
+type GroundedQueryResult = {
+  answer_text: string;
+  named_list: Array<{ name: string; rank: number }>;
+  tested_at: string;
+};
+
+const groundedQueryMemoryCache = new Map<string, GroundedQueryResult>();
+
+function groundedQueryCacheKey(category: string, locality: string, query: string): string {
+  return crypto
+    .createHash("sha256")
+    .update(`${category.trim().toLowerCase()}|${locality.trim().toLowerCase()}|${query.trim().toLowerCase()}`)
+    .digest("hex");
+}
+
+async function getCachedGroundedQuery(
+  category: string,
+  locality: string,
+  query: string
+): Promise<GroundedQueryResult | null> {
+  const key = groundedQueryCacheKey(category, locality, query);
+  const memoryValue = groundedQueryMemoryCache.get(key);
+  if (memoryValue) return memoryValue;
+  if (!firestore) return null;
+
+  try {
+    const snapshot = await firestore.collection("grounded_query_cache").doc(key).get();
+    if (!snapshot.exists) return null;
+    const data = snapshot.data() as GroundedQueryResult | undefined;
+    if (!data?.answer_text || !data.tested_at) return null;
+    if (Date.now() - new Date(data.tested_at).getTime() > QUERY_CACHE_TTL_MS) return null;
+
+    const value: GroundedQueryResult = {
+      answer_text: data.answer_text,
+      named_list: Array.isArray(data.named_list) ? data.named_list : [],
+      tested_at: data.tested_at,
+    };
+    groundedQueryMemoryCache.set(key, value);
+    return value;
+  } catch (err) {
+    console.warn("Firestore grounded-query cache read failed; continuing without cache:", err);
+    return null;
+  }
+}
+
+async function saveGroundedQuery(
+  category: string,
+  locality: string,
+  query: string,
+  result: GroundedQueryResult
+) {
+  const key = groundedQueryCacheKey(category, locality, query);
+  groundedQueryMemoryCache.set(key, result);
+  if (!firestore) return;
+
+  try {
+    await firestore.collection("grounded_query_cache").doc(key).set({
+      ...result,
+      category,
+      locality,
+      query,
+      expires_at: new Date(Date.now() + QUERY_CACHE_TTL_MS).toISOString(),
+    });
+  } catch (err) {
+    console.warn("Firestore grounded-query cache write failed; continuing with in-memory cache:", err);
+  }
+}
+
 // -------------------------------------------------------------
 // Constants & Geography
 // -------------------------------------------------------------
@@ -1178,6 +1248,16 @@ async function runWithConcurrency<T, R>(items: T[], limit: number, fn: (item: T)
   return results;
 }
 
+function withTimeout<T>(work: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timeoutId: NodeJS.Timeout | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(`${label} exceeded ${timeoutMs / 1000}s`)), timeoutMs);
+  });
+  return Promise.race([work, deadline]).finally(() => {
+    if (timeoutId) clearTimeout(timeoutId);
+  });
+}
+
 // -------------------------------------------------------------
 // Normalisation & Token Overlap (>= 0.7)
 // -------------------------------------------------------------
@@ -1256,12 +1336,12 @@ function extractBusinessesFromGroundingText(rawText: string): Array<{ name: stri
 // -------------------------------------------------------------
 async function getOrGenerateQueries(category: string, locality: string): Promise<string[]> {
   const cached = dbGetQuerySet(category, locality);
-  if (cached && cached.length === 6) {
+  if (cached && cached.length === CUSTOMER_QUERY_COUNT) {
     return cached;
   }
 
   const ai = getGenAI();
-  const prompt = `Generate 6 search queries a real customer in ${locality} would type or ask when looking for a ${category} business. Mix general intent (e.g. "best ${category.toLowerCase()} in ${locality}"), quality intent and specific-need intent. Return a JSON array of 6 strings only.`;
+  const prompt = `Generate ${CUSTOMER_QUERY_COUNT} search queries a real customer in ${locality} would type or ask when looking for a ${category} business. Mix general intent (e.g. "best ${category.toLowerCase()} in ${locality}"), quality intent and specific-need intent. Return a JSON array of ${CUSTOMER_QUERY_COUNT} strings only.`;
 
   try {
     const resp = await callGeminiWithRetry(ai, {
@@ -1279,12 +1359,12 @@ async function getOrGenerateQueries(category: string, locality: string): Promise
       queries = parsed.map((s) => String(s)).filter((s) => s.length > 0);
     }
 
-    if (queries.length < 6) {
-      while (queries.length < 6) {
+    if (queries.length < CUSTOMER_QUERY_COUNT) {
+      while (queries.length < CUSTOMER_QUERY_COUNT) {
         queries.push(`best ${category.toLowerCase()} in ${locality} ${queries.length + 1}`);
       }
     }
-    queries = queries.slice(0, 6);
+    queries = queries.slice(0, CUSTOMER_QUERY_COUNT);
     dbSaveQuerySet(category, locality, queries);
     return queries;
   } catch (err) {
@@ -1296,6 +1376,10 @@ async function getOrGenerateQueries(category: string, locality: string): Promise
       `recommended ${category.toLowerCase()} in ${locality}`,
       `affordable ${category.toLowerCase()} in ${locality}`,
       `trusted ${category.toLowerCase()} ${locality}`,
+      `find ${category.toLowerCase()} open now in ${locality}`,
+      `highest review ${category.toLowerCase()} in ${locality}`,
+      `local ${category.toLowerCase()} ${locality}`,
+      `top 10 ${category.toLowerCase()} in ${locality}`,
     ];
     dbSaveQuerySet(category, locality, fallbackQueries);
     return fallbackQueries;
@@ -1550,170 +1634,117 @@ async function runDiscoveryPipeline(
         localityGroups.get(loc)!.push(b);
       }
 
-      // 2. Iterate through each unique locality and test its specific query set
-      for (const [loc, groupBusinesses] of localityGroups.entries()) {
-        const localityQueries = await getOrGenerateQueries(category, loc);
-
-        // Initialize ai.queries for all businesses in this locality group
-        for (const b of groupBusinesses) {
-          b.ai = {
-            queries: localityQueries.map((q) => ({
-              query: q,
-              status: "pending",
-              mentioned: false,
-              rank: null,
-              answer_text: "",
-              verbatim_answer: "",
+      // 2. Build all locality-specific query jobs first, then apply one global
+      // concurrency limit. Nested pools can accidentally serialize whole areas.
+      const groups = await runWithConcurrency(
+        Array.from(localityGroups.entries()),
+        4,
+        async ([loc, groupBusinesses]) => {
+          const localityQueries = await getOrGenerateQueries(category, loc);
+          for (const b of groupBusinesses) {
+            b.ai = {
+              queries: localityQueries.map((query) => ({ query, status: "pending", mentioned: false, rank: null, answer_text: "", verbatim_answer: "" })),
+              mentions: 0,
+              total: localityQueries.length,
+              untested: 0,
+              visibility: 0,
+            };
+          }
+          return {
+            loc,
+            groupBusinesses,
+            groupNormalized: groupBusinesses.map((business) => ({
+              business,
+              tokens: new Set(normalizeName(business.name).split(" ").filter(Boolean)),
             })),
-            mentions: 0,
-            total: localityQueries.length,
-            untested: 0,
-            visibility: 0,
+            localityQueries,
           };
         }
+      );
 
-        // Prepare normalized token maps for businesses in this locality
-        const groupNormalized = groupBusinesses.map((b) => {
-          const norm = normalizeName(b.name);
-          const tokens = new Set(norm.split(" ").filter(Boolean));
-          return { business: b, norm, tokens };
-        });
+      const queryJobs = groups.flatMap(({ loc, groupBusinesses, groupNormalized, localityQueries }) =>
+        localityQueries.map((query, qIdx) => ({ loc, groupBusinesses, groupNormalized, query, qIdx }))
+      );
 
-        const queryItems = localityQueries.map((query, qIdx) => ({ query, qIdx }));
-
-        await runWithConcurrency(queryItems, 2, async ({ query, qIdx }) => {
-          // Gentle stagger between queries
-          await new Promise((resolve) => setTimeout(resolve, qIdx * 150));
-
-          const searchPrompt = `Act as an AI local recommendation assistant in ${loc}. Answer this customer search query: "${query}".
-List the top 5 recommended local businesses in ${loc} in order based on current web and local results.
-Format your answer clearly with the numbered rank and business name, for example:
-1. Business Name
-2. Business Name
-3. Business Name
-4. Business Name
-5. Business Name`;
-
-          let namedList: Array<{ name: string; rank: number }> = [];
-          let verbatimAnswerText = "";
-
-          // 1. Try Gemini with Google Search Grounding
-          try {
-            const groundingResp = await callGeminiWithRetry(
-              ai,
-              {
-                model: MODEL,
-                contents: searchPrompt,
-                config: {
-                  tools: [{ googleSearch: {} }],
-                },
-              },
-              1,
-              1500
-            );
-            const text = groundingResp.text?.trim() || "";
-            // A grounded answer is a completed test even when its format does not
-            // let us extract a ranked list. Persist it and record a miss rather
-            // than presenting the query as untested in the audit.
-            verbatimAnswerText = text;
-            namedList = extractBusinessesFromGroundingText(text);
-          } catch (geminiErr) {
-            console.warn(`Gemini Search Grounding call failed for query "${query}":`, geminiErr);
+      const markFailed = (groupBusinesses: typeof top20, qIdx: number) => {
+        for (const b of groupBusinesses) {
+          const entry = b.ai?.queries?.[qIdx];
+          if (entry && entry.status === "pending") {
+            Object.assign(entry, { status: "failed", mentioned: false, rank: null, answer_text: "", verbatim_answer: "" });
           }
+        }
+      };
 
-          // 2. Fallback to Google Places Text Search if Gemini was rate-limited or returned no names
-          if (namedList.length === 0) {
-            try {
-              const mapsApiKey = process.env.MAPS_API_KEY;
-              if (mapsApiKey) {
-                const placesResp = await fetch("https://places.googleapis.com/v1/places:searchText", {
-                  method: "POST",
-                  headers: {
-                    "Content-Type": "application/json",
-                    "X-Goog-Api-Key": mapsApiKey,
-                    "X-Goog-FieldMask": "places.displayName,places.formattedAddress",
-                  },
-                  body: JSON.stringify({
-                    textQuery: `${query} in ${loc}`,
-                    pageSize: 5,
-                  }),
-                });
-                if (placesResp.ok) {
-                  const pData: any = await placesResp.json();
-                  const pList = pData.places || [];
-                  if (Array.isArray(pList) && pList.length > 0) {
-                    namedList = pList.map((p: any, idx: number) => ({
-                      name: typeof p.displayName === "object" ? p.displayName.text || "" : p.displayName || "",
-                      rank: idx + 1,
-                    }));
-                    verbatimAnswerText = namedList
-                      .map((n) => `${n.rank}. ${n.name}`)
-                      .join("\n");
-                  }
+      try {
+        await withTimeout(
+          runWithConcurrency(queryJobs, GROUNDING_QUERY_CONCURRENCY, async ({ loc, groupBusinesses, groupNormalized, query, qIdx }) => {
+            let namedList: Array<{ name: string; rank: number }> = [];
+            let verbatimAnswerText = "";
+            const cached = await getCachedGroundedQuery(category, loc, query);
+
+            if (cached) {
+              verbatimAnswerText = cached.answer_text;
+              namedList = cached.named_list;
+            } else {
+              const searchPrompt = `Act as an AI local recommendation assistant in ${loc}. Answer this customer search query: "${query}".\nList the top 5 recommended local businesses in ${loc} in order based on current web and local results.\nFormat your answer clearly with the numbered rank and business name.`;
+              try {
+                const response = await withTimeout(
+                  callGeminiWithRetry(ai, { model: MODEL, contents: searchPrompt, config: { tools: [{ googleSearch: {} }] } }, 1, 1500),
+                  GROUNDING_QUERY_TIMEOUT_MS,
+                  `Grounded query ${qIdx + 1}`
+                );
+                verbatimAnswerText = response.text?.trim() || "";
+                namedList = extractBusinessesFromGroundingText(verbatimAnswerText);
+                if (verbatimAnswerText) {
+                  await saveGroundedQuery(category, loc, query, {
+                    answer_text: verbatimAnswerText,
+                    named_list: namedList,
+                    tested_at: new Date().toISOString(),
+                  });
                 }
+              } catch (err) {
+                console.warn(`Gemini Search Grounding failed for query "${query}":`, err);
               }
-            } catch (placesErr) {
-              console.warn(`Places search fallback failed for query "${query}":`, placesErr);
             }
-          }
 
-          if (verbatimAnswerText) {
-            // Mark query as tested on all businesses in this locality initially
+            if (!verbatimAnswerText) {
+              markFailed(groupBusinesses, qIdx);
+              return;
+            }
+
             for (const b of groupBusinesses) {
-              const qEntry = b.ai.queries[qIdx];
-              if (qEntry) {
-                qEntry.status = "tested";
-                qEntry.mentioned = false;
-                qEntry.rank = null;
-                qEntry.answer_text = verbatimAnswerText;
-                qEntry.verbatim_answer = verbatimAnswerText;
-              }
+              const entry = b.ai.queries[qIdx];
+              if (entry) Object.assign(entry, { status: "tested", mentioned: false, rank: null, answer_text: verbatimAnswerText, verbatim_answer: verbatimAnswerText });
             }
 
-            // Match grounded business names to candidates in this locality
             for (const named of namedList) {
               const rawName = String(named.name || "").trim();
               if (!rawName) continue;
-
-              const normNamed = normalizeName(rawName);
-              const tokensNamed = new Set(normNamed.split(" ").filter(Boolean));
-
+              const tokensNamed = new Set(normalizeName(rawName).split(" ").filter(Boolean));
               let bestMatch: any = null;
               let highestOverlap = 0;
-
-              for (const qItem of groupNormalized) {
-                const overlap = calculateTokenOverlap(tokensNamed, qItem.tokens);
+              for (const candidate of groupNormalized) {
+                const overlap = calculateTokenOverlap(tokensNamed, candidate.tokens);
                 if (overlap >= 0.65 && overlap > highestOverlap) {
                   highestOverlap = overlap;
-                  bestMatch = qItem.business;
+                  bestMatch = candidate.business;
                 }
               }
-
               if (bestMatch) {
-                const qEntry = bestMatch.ai.queries[qIdx];
-                if (qEntry) {
-                  qEntry.status = "tested";
-                  qEntry.mentioned = true;
-                  qEntry.rank = named.rank || 1;
-                }
+                Object.assign(bestMatch.ai.queries[qIdx], { mentioned: true, rank: named.rank || 1 });
               } else {
                 unmatchedMap[rawName] = (unmatchedMap[rawName] || 0) + 1;
               }
             }
-          } else {
-            // Mark query as failed if no results could be retrieved
-            for (const b of groupBusinesses) {
-              const qEntry = b.ai.queries[qIdx];
-              if (qEntry) {
-                qEntry.status = "failed";
-                qEntry.mentioned = false;
-                qEntry.rank = null;
-                qEntry.answer_text = "";
-                qEntry.verbatim_answer = "";
-              }
-            }
-          }
-        });
+          }),
+          VISIBILITY_STAGE_TIMEOUT_MS,
+          "AI visibility stage"
+        );
+      } catch (err) {
+        console.warn("AI visibility stage timed out; saving completed query results:", err);
+        for (const { groupBusinesses } of groups) {
+          for (let qIdx = 0; qIdx < CUSTOMER_QUERY_COUNT; qIdx++) markFailed(groupBusinesses, qIdx);
+        }
       }
 
       // Calculate visibility scores directly from the stored ai.queries array
@@ -1795,7 +1826,7 @@ Format your answer clearly with the numbered rank and business name, for example
           rating,
           review_count,
           appearances: item.count,
-          total_queries: queries.length,
+          total_queries: Math.max(...top20.map((b) => Number(b.ai?.total || 0)), 0),
           quality_score: qualityScore,
           place_id: place?.place_id,
         };
@@ -1884,40 +1915,8 @@ Format your answer clearly with the numbered rank and business name, for example
       b.value_estimate = computeOpportunityValueEstimate(b, category, options);
     }
 
-    // Try refining service rationale with Gemini concurrently
-    try {
-      await runWithConcurrency(top20, 4, async (b) => {
-        const obsList = (b.site?.findings || []).map((f: any) => f.observation).join("; ");
-        const missedCount = (b.ai?.total || 10) - (b.ai?.mentions || 0);
-        const prompt = `Write a 1-sentence explanation of why "${b.recommended_service}" is recommended for the business "${b.name}" based on these observed facts:
-- Website audited: ${b.site.no_website ? "No website" : `Performance ${b.site.performance}/100, SEO ${b.site.seo}/100`}
-- Observations: ${obsList || "None"}
-- AI Visibility: ${b.ai.visibility}% (missed ${missedCount} of ${b.ai.total} queries)
-- Customer rating: ${b.rating} (${b.review_count} reviews)
-
-Keep it under 30 words. Output the rationale sentence only.`;
-
-        try {
-          const resp = await callGeminiWithRetry(
-            ai,
-            {
-              model: MODEL,
-              contents: prompt,
-            },
-            1,
-            1000
-          );
-          const refined = resp.text?.trim();
-          if (refined && refined.length > 10) {
-            b.service_rationale = refined;
-          }
-        } catch {
-          // Keep default deterministic rationale
-        }
-      });
-    } catch {
-      // Continue with default rationale
-    }
+    // Keep deterministic service rationales. The visibility evidence is the
+    // expensive part of a scan; twenty extra model calls add no proof value.
 
     // Sort descending by gold_score
     top20.sort((a, b) => {
@@ -2065,7 +2064,7 @@ app.get("/api/run/:runId", (req: Request, res: Response) => {
   res.json({
     ...runData,
     elapsed_sec: runData.status === "complete" ? (runData.total_duration_sec || elapsedSec) : elapsedSec,
-    estimated_total_sec: estimates.total,
+    estimated_total_sec: estimates.estimated_total_sec,
     stage_estimates_sec: estimates.stages,
   });
 });
