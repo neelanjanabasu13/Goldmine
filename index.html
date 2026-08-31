@@ -1289,10 +1289,15 @@
         // Reset Outreach UI
         document.getElementById("outreachPanel").style.display = "none";
         const outreachButton = document.getElementById("btnSendOutreach");
-        outreachButton.disabled = !aiMeasured;
-        outreachButton.textContent = aiMeasured
-          ? "SEND THIS PROSPECT AN EMAIL"
-          : "AI VISIBILITY MUST BE MEASURED BEFORE OUTREACH";
+        const outreachEligible = fullEvidence && visibility < 40;
+        outreachButton.disabled = !outreachEligible;
+        outreachButton.textContent = !aiMeasured
+          ? "AI VISIBILITY MUST BE MEASURED BEFORE OUTREACH"
+          : !fullEvidence
+            ? "TEN COMPLETED TESTS REQUIRED FOR OUTREACH"
+            : visibility >= 40
+              ? "NOT AN AI-VISIBILITY OUTREACH PROSPECT"
+              : "SEND THIS PROSPECT AN EMAIL";
       }
 
       // -----------------------------------------------------------

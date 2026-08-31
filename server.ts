@@ -2678,6 +2678,10 @@ app.post("/api/outreach/:placeId", async (req: Request, res: Response) => {
     res.status(422).json({ error: "Outreach is unavailable until all ten AI visibility queries have completed." });
     return;
   }
+  if (Number(business.ai?.visibility || 0) >= 40) {
+    res.status(422).json({ error: "This business is already visible in AI search and is not a Goldmine outreach prospect." });
+    return;
+  }
 
   if (business.discovery?.brand_check_status === "pending" || business.discovery?.brand_check_status === undefined) {
     await verifyMultiLocationBrands([business], business.discovery?.scope || "London, UK");
