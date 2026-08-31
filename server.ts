@@ -2789,7 +2789,9 @@ app.get("/api/spotlight", async (req: Request, res: Response) => {
   }
 
   const allBusinesses = await dbListBusinesses();
-  const measuredBusinesses = allBusinesses.filter(hasMeasuredAiVisibility);
+  // A spotlight is public proof. Partial query responses must never be picked
+  // merely because they happened to produce a numeric score in an older run.
+  const measuredBusinesses = allBusinesses.filter(hasCompleteAiVisibility);
   if (measuredBusinesses.length === 0) {
     res.status(404).json({ error: "No business has a completed AI visibility measurement yet" });
     return;

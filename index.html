@@ -684,8 +684,9 @@
         const reviewsFormatted = reviewsCount.toLocaleString();
         const rating = Number(biz.rating || 0).toFixed(1);
         const aiMeasured = hasMeasuredAiVisibility(biz);
-        const aiVis = aiMeasured ? Number(biz.ai?.visibility || 0) : null;
-        const goldScore = aiMeasured ? Math.round(Number(biz.gold_score || 0)) : null;
+        const aiComplete = hasCompleteAiVisibility(biz);
+        const aiVis = aiComplete ? Number(biz.ai?.visibility || 0) : null;
+        const goldScore = aiComplete ? Math.round(Number(biz.gold_score || 0)) : null;
         const aiMentions = Number(biz.ai?.mentions || 0);
         const aiTotal = Number(biz.ai?.total || 0);
         const recService = biz.recommended_service || "Technical audit follow-up";
@@ -694,6 +695,8 @@
         const catSingular = category.toLowerCase().replace(/s and .*/, "").replace(/ies$/, "y").replace(/s$/, "");
         if (!aiMeasured) {
           summarySentence = `A ${escapeHtml(catSingular)} with ${reviewsFormatted} reviews at ${rating} stars. AI visibility could not be measured in this run.`;
+        } else if (!aiComplete) {
+          summarySentence = `A ${escapeHtml(catSingular)} with ${reviewsFormatted} reviews at ${rating} stars. Goldmine completed ${aiTotal} of 10 AI visibility queries, so no Gold score is shown.`;
         } else if (aiVis === 0 || aiMentions === 0) {
           summarySentence = `A ${escapeHtml(catSingular)} with ${reviewsFormatted} reviews at ${rating} stars that Gemini has never once recommended.`;
         } else {
@@ -707,7 +710,7 @@
                 <div class="biz-name">${escapeHtml(biz.name)}</div>
                 <div class="biz-addr">${escapeHtml(category)} · ${escapeHtml(address)}</div>
               </div>
-              <div class="coin"><strong id="proofGoldVal">${goldScore ?? "—"}</strong><em>${aiMeasured ? "GOLD" : "PENDING"}</em></div>
+              <div class="coin"><strong id="proofGoldVal">${goldScore ?? "—"}</strong><em>${aiComplete ? "GOLD" : "PENDING"}</em></div>
             </div>
             <div class="split">
               <div class="half customers">
@@ -717,8 +720,8 @@
               </div>
               <div class="half ai">
                 <div class="lab">WHAT AI THINKS</div>
-                <div class="big" id="proofAiVis">${aiMeasured ? `${aiVis}%` : "—"}</div>
-                <div class="note">${aiMeasured ? `named in ${aiMentions} of ${aiTotal} searches customers actually make` : "AI visibility could not be measured"}</div>
+                <div class="big" id="proofAiVis">${aiComplete ? `${aiVis}%` : "—"}</div>
+                <div class="note">${aiComplete ? `named in ${aiMentions} of ${aiTotal} searches customers actually make` : aiMeasured ? `${aiTotal} of 10 queries completed — Gold score withheld` : "AI visibility could not be measured"}</div>
               </div>
             </div>
             <div class="verdict">
@@ -735,16 +738,18 @@
         `;
 
         // Animate count ups on first render
-        if (aiMeasured) animateCountUp(document.getElementById("proofGoldVal"), goldScore, 600);
+        if (aiComplete) animateCountUp(document.getElementById("proofGoldVal"), goldScore, 600);
         animateCountUp(document.getElementById("proofRating"), Number(rating), 600, "", "", 1);
-        if (aiMeasured) animateCountUp(document.getElementById("proofAiVis"), aiVis, 600, "", "%");
+        if (aiComplete) animateCountUp(document.getElementById("proofAiVis"), aiVis, 600, "", "%");
 
-        document.getElementById("landingProofCard").addEventListener("click", () => {
-          currentBusiness = biz;
-          currentRunDoc = { category, location: address };
-          renderDetailView(biz, currentRunDoc);
-          showView("detail");
-        });
+        if (aiComplete) {
+          document.getElementById("landingProofCard").addEventListener("click", () => {
+            currentBusiness = biz;
+            currentRunDoc = { category, location: address };
+            renderDetailView(biz, currentRunDoc);
+            showView("detail");
+          });
+        }
       }
 
       // -----------------------------------------------------------
