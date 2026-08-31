@@ -2560,6 +2560,7 @@ app.get("/api/health", async (req: Request, res: Response) => {
     persistence: firestoreAvailable ? "firestore" : "local-fallback",
     firestore_failure: firestoreFailure,
     runtime_service_account: await getRuntimeServiceAccount(),
+    deployment_version: "e312d59",
   });
 });
 
