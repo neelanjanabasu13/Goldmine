@@ -1330,7 +1330,10 @@ async function verifyMultiLocationBrands(businesses: any[], location: string) {
   await runWithConcurrency(businesses, 8, async (business) => {
     // A fast market scan deliberately marks candidates as pending. That is a
     // safety lock, not a reason to skip the selected-business verification.
-    if (business.discovery?.brand_check_status === "verified" || business.discovery?.brand_check_status === "unverified") return;
+    // A completed positive check is durable. A negative result can be caused
+    // by an incomplete Places text match, so let a later selected-business
+    // action retry it instead of permanently locking a genuine prospect out.
+    if (business.discovery?.brand_check_status === "verified") return;
     const term = brandSearchTerm(business.name || "");
     if (!term) {
       business.discovery = {
@@ -1347,7 +1350,10 @@ async function verifyMultiLocationBrands(businesses: any[], location: string) {
       const response = await fetch(url, {
         method: "POST",
         headers,
-        body: JSON.stringify({ textQuery: `${term} ${parentMarket}`, pageSize: 20 }),
+        // Search with the business's displayed name, not only the first
+        // normalised brand token. A query such as “cafe London” is too broad
+        // and frequently fails to return the selected venue at all.
+        body: JSON.stringify({ textQuery: `${String(business.name || term).trim()} ${parentMarket}`, pageSize: 20 }),
         signal: controller.signal,
       });
       clearTimeout(timeout);
