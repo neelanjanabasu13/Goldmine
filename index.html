@@ -102,6 +102,7 @@
       #viewLanding{display:flex;text-align:center;flex-direction:column}
       #viewLanding h1{margin-inline:auto}
       #viewLanding .sub{margin-inline:auto}
+      .product-name{order:0;margin:0 auto 18px;font-family:'Bricolage Grotesque',Outfit,sans-serif;font-size:clamp(24px,3vw,34px);font-weight:800;letter-spacing:-.045em;color:var(--teal)}
       #viewLanding>h1{order:1}
       #viewLanding>.sub{order:2}
       #viewLanding>.scan-entry{order:3}
@@ -268,9 +269,10 @@
            VIEW 1: LANDING SCREEN
            --------------------------------------------------------- -->
       <div id="viewLanding">
+        <p class="product-name">Goldmine</p>
         <h1>Find the businesses your agency is <mark>missing</mark>.</h1>
           <p class="sub">
-          Find London businesses their communities already love, but AI does not yet recommend — then turn the evidence into a considered outreach email.
+          Find London businesses their communities already love, but AI does not yet recommend, then turn the evidence into a considered outreach email.
         </p>
         <button id="btnExploreMarket" class="btn hero-action">EXPLORE THE LOCAL MARKET ↓</button>
 
@@ -293,17 +295,17 @@
           </div>
           <div class="story-steps">
             <article class="story-step active" data-story-mode="market">
-              <span class="story-step-number">01 — MARKET</span>
+              <span class="story-step-number">01 · MARKET</span>
               <h2>Find the local favourites.</h2>
               <p>Goldmine searches a defined London area, groups duplicate brands and excludes chains from the prospect list.</p>
             </article>
             <article class="story-step" data-story-mode="evidence">
-              <span class="story-step-number">02 — EVIDENCE</span>
+              <span class="story-step-number">02 · EVIDENCE</span>
               <h2>Test what customers actually ask.</h2>
               <p>Every eligible business is measured against the same ten customer-intent questions. No invisible “AI score” is treated as proof.</p>
             </article>
             <article class="story-step" data-story-mode="outreach">
-              <span class="story-step-number">03 — OUTREACH</span>
+              <span class="story-step-number">03 · OUTREACH</span>
               <h2>Turn a gap into a conversation.</h2>
               <p>Open a business to see the evidence, website findings, local context and a grounded outreach draft in one place.</p>
             </article>
@@ -351,7 +353,7 @@
           </select>
           <button id="btnFindGold" class="btn btn-primary">FIND GOLD</button>
           </div>
-          <p class="scope-help">Free: one area and category search, plus one verified prospect email. One later unlock covers every remaining verified email draft from this scan. London only — select an area, no borough knowledge or free-text spelling required.</p>
+          <p class="scope-help">Free access includes one area and category search, plus one verified prospect email. One later unlock covers every remaining verified email draft from this scan. Goldmine serves London through a structured area selector, with no borough knowledge or free-text spelling required.</p>
         </section>
 
         <div id="indexStatsLine" class="indexline">
@@ -499,7 +501,7 @@
           <div class="lab">TOP CUSTOMER REVIEW</div>
           <div class="quote">
             <p id="topReviewQuote">"..."</p>
-            <footer id="topReviewMeta">— Customer</footer>
+            <footer id="topReviewMeta">Customer</footer>
           </div>
         </div>
 
@@ -556,7 +558,6 @@
             <div class="body" id="outreachBody"></div>
             <div class="acts">
               <button id="btnCopyEmail" class="btn">Copy</button>
-              <button id="btnMailto" class="btn btn-primary">Open in email client</button>
             </div>
           </div>
         </div>
@@ -731,7 +732,7 @@
                 <div class="biz-name">${escapeHtml(biz.name)}</div>
                 <div class="biz-addr">${escapeHtml(category)} · ${escapeHtml(address)}</div>
               </div>
-              <div class="coin ${aiComplete && aiVis > 35 ? "neutral" : ""}"><strong id="proofGoldVal">${goldScore ?? "—"}</strong><em>${aiComplete && aiVis <= 35 ? "GOLD" : "NOT A LEAD"}</em></div>
+              <div class="coin ${aiComplete && aiVis > 35 ? "neutral" : ""}"><strong id="proofGoldVal">${goldScore ?? "N/A"}</strong><em>${aiComplete && aiVis <= 35 ? "GOLD" : "CONTEXT ONLY"}</em></div>
             </div>
             <div class="split">
               <div class="half customers">
@@ -741,8 +742,8 @@
               </div>
               <div class="half ai ${aiComplete ? (aiVis <= 35 ? "" : aiVis < 70 ? "medium" : "strong") : ""}">
                 <div class="lab">AI DISCOVERABILITY</div>
-                <div class="big" id="proofAiVis">${aiComplete ? `${aiVis}%` : "—"}</div>
-                <div class="note">${aiComplete ? `named in ${aiMentions} of ${aiTotal} searches customers actually make` : aiMeasured ? `${aiTotal} of 10 queries completed — Gold score withheld` : "AI visibility could not be measured"}</div>
+                <div class="big" id="proofAiVis">${aiComplete ? `${aiVis}%` : "N/A"}</div>
+                <div class="note">${aiComplete ? `named in ${aiMentions} of ${aiTotal} searches customers actually make` : aiMeasured ? `${aiTotal} of 10 queries completed. Gold score withheld.` : "AI visibility could not be measured"}</div>
               </div>
             </div>
             <div class="verdict">
@@ -1047,7 +1048,7 @@
             <td style="text-align: right;">${b.rating || 0}★ <span style="color: var(--faint); font-size: 13px;">(${b.review_count || 0})</span></td>
             <td style="text-align: right; color: var(--pos); font-weight: 600;">${b.quality?.score || 0}</td>
             <td style="text-align: right; color: ${scoredEvidence && b.ai?.visibility < 40 ? 'var(--neg)' : 'var(--faint)'}; font-weight: 600;">${visibilityLabel}</td>
-            <td class="goldcell">${scoredEvidence ? `${b.gold_score}${completeEvidence ? '' : `<small style="display:block; font-size:10px; color:var(--faint);">${b.score_status === 'indicative' ? 'EARLY SIGNAL' : 'PROVISIONAL'}</small>`}` : '—'}</td>
+            <td class="goldcell">${scoredEvidence ? `${b.gold_score}${completeEvidence ? '' : `<small style="display:block; font-size:10px; color:var(--faint);">${b.score_status === 'indicative' ? 'EARLY SIGNAL' : 'PROVISIONAL'}</small>`}` : 'N/A'}</td>
           `;
 
           if (scoredEvidence) {
@@ -1103,7 +1104,7 @@
         // Top Verdict Line
         const cohortSize = Number(b.quality?.cohort_size || runDoc.discovery?.qualified_candidates || runDoc.stage_counts?.qualifying || 0);
         const cohortLabel = cohortSize > 0 ? `${cohortSize} Google Places candidates` : "the Google Places candidate cohort";
-        let verdictText = `Their reputation score is in the top ${topPct}% of ${cohortLabel} returned for this scan — not a market-wide ranking. `;
+        let verdictText = `Their reputation score is in the top ${topPct}% of ${cohortLabel} returned for this scan, within this candidate cohort rather than a market-wide ranking. `;
         if (totalTested === 0) {
           verdictText += "AI visibility not measured for this business.";
         } else if (visibility === 0) {
@@ -1121,12 +1122,12 @@
         // Top Card Numbers (Count-up)
         const goldScore = scoredEvidence ? Math.round(Number(b.gold_score || 0)) : null;
         if (scoredEvidence) animateCountUp(document.getElementById("detailGoldScore"), goldScore, 600);
-        else document.getElementById("detailGoldScore").textContent = "—";
+        else document.getElementById("detailGoldScore").textContent = "N/A";
         document.getElementById("detailGoldLabel").textContent = fullEvidence ? "GOLD" : scoredEvidence ? (b.score_status === "indicative" ? "EARLY SIGNAL" : "PROVISIONAL") : "PENDING";
         animateCountUp(document.getElementById("detailRating"), b.rating || 0, 600, "", "", 1);
         document.getElementById("detailReviewCount").textContent = `from ${(b.review_count || 0).toLocaleString()} customer reviews`;
         if (aiMeasured) animateCountUp(document.getElementById("detailAiVis"), visibility, 600, "", "%");
-        else document.getElementById("detailAiVis").textContent = "—";
+        else document.getElementById("detailAiVis").textContent = "N/A";
 
         if (totalTested === 0) {
           document.getElementById("detailAiVisNote").textContent = "AI visibility not measured for this business";
@@ -1142,7 +1143,7 @@
           document.getElementById("topReviewQuote").textContent = `"${b.top_review.text}"`;
           const author = b.top_review.author || "Customer";
           const time = b.top_review.relative_time ? ` · ${b.top_review.relative_time}` : "";
-          document.getElementById("topReviewMeta").textContent = `— ${author}${time}`;
+          document.getElementById("topReviewMeta").textContent = `${author}${time}`;
           topRevSection.style.display = "block";
         } else {
           topRevSection.style.display = "none";
@@ -1424,13 +1425,6 @@
             setTimeout(() => {
               document.getElementById("btnCopyEmail").textContent = "Copy";
             }, 2000);
-          };
-
-          // Mailto button
-          document.getElementById("btnMailto").onclick = () => {
-            const recipient = data.email || "";
-            const mailtoUrl = `mailto:${encodeURIComponent(recipient)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(bodyText)}`;
-            window.open(mailtoUrl, "_blank");
           };
         } catch (err) {
           console.error("Outreach generation failed:", err);
