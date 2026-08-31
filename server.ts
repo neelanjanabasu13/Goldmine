@@ -1275,7 +1275,13 @@ function resolveLondonArea(rawLocation: string): { label: string; searchScope: s
 
 function getParentMarket(location: string): string {
   const parts = location.split(",").map((part) => part.trim()).filter(Boolean);
-  return parts.length > 1 ? parts[parts.length - 1] : location;
+  // A selected area resolves to e.g. "Highgate, London, UK". Brand checks
+  // need the parent city, not the final country token; otherwise a generic
+  // brand-name search can produce unrelated UK matches and wrongly exclude a
+  // real local independent business.
+  const londonIndex = parts.findIndex((part) => part.toLowerCase() === "london");
+  if (londonIndex >= 0) return parts.slice(londonIndex).join(", ");
+  return parts.length > 1 ? parts.slice(1).join(", ") : location;
 }
 
 function brandSearchTerm(name: string): string | null {
