@@ -759,6 +759,38 @@ const CATEGORY_AVG_CUSTOMER_VALUES: Record<string, number> = {
   "Hospitality": 120,
 };
 
+const CATEGORY_OPPORTUNITY_BENCHMARKS: Record<string, { monthly_searches: number; conversion_rate: number }> = {
+  "Restaurants and cafés": { monthly_searches: 240, conversion_rate: 0.03 },
+  "Restaurants and cafes": { monthly_searches: 240, conversion_rate: 0.03 },
+  "Bars and pubs": { monthly_searches: 200, conversion_rate: 0.03 },
+  "Beauty and aesthetics": { monthly_searches: 160, conversion_rate: 0.04 },
+  "Hair": { monthly_searches: 140, conversion_rate: 0.04 },
+  "Fitness": { monthly_searches: 120, conversion_rate: 0.04 },
+  "Dental": { monthly_searches: 80, conversion_rate: 0.04 },
+  "Private healthcare": { monthly_searches: 70, conversion_rate: 0.04 },
+  "Veterinary": { monthly_searches: 70, conversion_rate: 0.04 },
+  "Legal": { monthly_searches: 35, conversion_rate: 0.03 },
+  "Accountancy": { monthly_searches: 45, conversion_rate: 0.03 },
+  "Estate agencies": { monthly_searches: 60, conversion_rate: 0.03 },
+  "Retail": { monthly_searches: 180, conversion_rate: 0.03 },
+  "Home services": { monthly_searches: 90, conversion_rate: 0.04 },
+  "Automotive": { monthly_searches: 70, conversion_rate: 0.04 },
+  "Hospitality": { monthly_searches: 140, conversion_rate: 0.03 },
+};
+
+function getOpportunityBenchmark(category: string): { monthly_searches: number; conversion_rate: number } {
+  for (const [key, benchmark] of Object.entries(CATEGORY_OPPORTUNITY_BENCHMARKS)) {
+    if (
+      key.toLowerCase() === category.toLowerCase() ||
+      category.toLowerCase().includes(key.toLowerCase()) ||
+      key.toLowerCase().includes(category.toLowerCase())
+    ) {
+      return benchmark;
+    }
+  }
+  return { monthly_searches: 120, conversion_rate: 0.03 };
+}
+
 function getAvgCustomerValue(category: string, override?: number): number {
   if (typeof override === "number" && override > 0) return override;
   if (!category) return 100;
@@ -779,28 +811,27 @@ function computeOpportunityValueEstimate(
   category: string,
   overrides?: { avg_customer_value?: number; monthly_searches?: number; conversion_rate?: number }
 ) {
+  const benchmark = getOpportunityBenchmark(category);
   const avg_customer_value =
     typeof overrides?.avg_customer_value === "number" && overrides.avg_customer_value > 0
       ? overrides.avg_customer_value
-      : null;
+      : getAvgCustomerValue(category);
   const monthly_searches =
     typeof overrides?.monthly_searches === "number" && overrides.monthly_searches > 0
       ? overrides.monthly_searches
-      : null;
+      : benchmark.monthly_searches;
   const conversion_rate =
     typeof overrides?.conversion_rate === "number" && overrides.conversion_rate > 0
       ? overrides.conversion_rate
-      : null;
+      : benchmark.conversion_rate;
 
   const total_queries =
     b.ai && typeof b.ai.total === "number"
       ? b.ai.total
       : 0;
 
-  // Requirement 2c: If the number of tested queries is zero, do not compute or display a visibility gap,
-  // a monthly value or an annual value. A 100% visibility gap must never be inferred from untested queries.
-  const hasRevenueAssumptions = avg_customer_value !== null && monthly_searches !== null && conversion_rate !== null;
-  if (total_queries === 0 || !hasRevenueAssumptions) {
+  // Do not estimate an opportunity from incomplete AI visibility evidence.
+  if (!hasCompleteAiVisibility(b)) {
     return {
       avg_customer_value,
       monthly_searches,
@@ -826,7 +857,7 @@ function computeOpportunityValueEstimate(
       ? b.ai.mentions
       : 0;
 
-  const rawGap = (competitor_appearances - own_appearances) / total_queries;
+  const rawGap = 1 - (own_appearances / total_queries);
   const visibility_gap = Number(Math.max(0, rawGap).toFixed(4));
   const missed_discoveries = Math.round(monthly_searches * visibility_gap);
   const monthly_value = Math.round(missed_discoveries * conversion_rate * avg_customer_value);
@@ -845,6 +876,7 @@ function computeOpportunityValueEstimate(
     annual_value,
     is_estimate: true,
     measured: true,
+    benchmark_source: "local category benchmark",
   };
 }
 
@@ -2654,9 +2686,16 @@ app.get("/api/run/:runId", async (req: Request, res: Response) => {
   const elapsedSec = runData.started_at
     ? Number(((Date.now() - new Date(runData.started_at).getTime()) / 1000).toFixed(1))
     : 0;
+  // Recalculate display estimates at read time so a prior run never carries an
+  // obsolete generic assumption into the agency-facing prospect view.
+  const results = (runData.results || []).map((business: any) => ({
+    ...business,
+    value_estimate: computeOpportunityValueEstimate(business, runData.category),
+  }));
 
   res.json({
     ...runData,
+    results,
     elapsed_sec: runData.status === "complete" ? (runData.total_duration_sec || elapsedSec) : elapsedSec,
     estimated_total_sec: estimates.estimated_total_sec,
     stage_estimates_sec: estimates.stages,
