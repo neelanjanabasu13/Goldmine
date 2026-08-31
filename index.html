@@ -96,7 +96,10 @@
       .controls input:focus,.controls select:focus{outline:3px solid rgba(15,107,112,.28);outline-offset:1px}
       .controls .btn{flex:0 0 auto;background:var(--ink);color:var(--paper);padding:14px 28px;font-size:15px}
       .scope-help{margin:14px 0 0;font-size:14px;color:var(--muted);font-weight:400}
-      #viewLanding{text-align:center;flex-direction:column}
+      /* The landing view must be a flex layout on the initial page load as
+         well as after client-side navigation; otherwise the visual order
+         declarations below are ignored and the primary search appears late. */
+      #viewLanding{display:flex;text-align:center;flex-direction:column}
       #viewLanding h1{margin-inline:auto}
       #viewLanding .sub{margin-inline:auto}
       #viewLanding>h1{order:1}
