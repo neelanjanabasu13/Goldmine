@@ -2715,6 +2715,23 @@ app.post("/api/outreach/:placeId", async (req: Request, res: Response) => {
   // a permanent gate meant the corrected verifier was never invoked.
   if (business.discovery?.brand_check_status !== "verified") {
     await verifyMultiLocationBrands([business], business.discovery?.scope || "London, UK");
+    // The scan already has deterministic local evidence for a business with a
+    // unique website domain occurring once in its candidate cohort. A missing
+    // or unavailable supplementary Places lookup must not turn that positive
+    // evidence into a permanent false rejection. Positive multi-location
+    // evidence (either cohort group size or Places location count above one)
+    // still wins and remains excluded.
+    const uniqueLocalCandidate = String(business.discovery?.brand_key || "").startsWith("domain:")
+      && Number(business.discovery?.brand_group_size || 1) <= 1
+      && Number(business.discovery?.brand_check_locations || 0) <= 1;
+    if (uniqueLocalCandidate) {
+      business.discovery = {
+        ...(business.discovery || {}),
+        brand_check_status: "candidate_verified",
+        outreach_eligible: true,
+        exclusion_reason: null,
+      };
+    }
     await dbSaveBusiness(business.place_id, business);
   }
   const independentCheckPassed = business.discovery?.brand_check_status === "verified"
