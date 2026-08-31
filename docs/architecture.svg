@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
+  <title id="title">Goldmine architecture</title>
+  <desc id="desc">A user scans a London area in the Goldmine web app. Cloud Run orchestrates Google Places, Gemini on Vertex AI and PageSpeed, writes evidence to Firestore, and returns scored prospects and outreach drafts.</desc>
+  <defs>
+    <style>
+      .bg{fill:#fbf8f2}.title{font:700 48px Arial,sans-serif;fill:#181410}.sub{font:400 20px Arial,sans-serif;fill:#746c62}.h{font:700 22px Arial,sans-serif;fill:#181410}.p{font:400 18px Arial,sans-serif;fill:#514a42}.small{font:600 15px Arial,sans-serif;fill:#81786d;letter-spacing:1.6px}.box{fill:#fff;stroke:#201b16;stroke-width:3}.cloud{fill:#edf7f1;stroke:#187a70;stroke-width:3}.google{fill:#fff6d8;stroke:#c88d11;stroke-width:3}.db{fill:#f4efff;stroke:#7654ad;stroke-width:3}.arrow{stroke:#514a42;stroke-width:3;fill:none;marker-end:url(#head)}
+    </style>
+    <marker id="head" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#514a42"/></marker>
+  </defs>
+  <rect class="bg" width="1600" height="900"/>
+  <text class="small" x="94" y="86">ALL THINGS AGENTIC · GOOGLE CLOUD</text>
+  <text class="title" x="94" y="145">Goldmine architecture</text>
+  <text class="sub" x="94" y="182">Evidence-led local prospecting: customer reputation × AI discoverability gap.</text>
+
+  <rect class="box" x="94" y="292" rx="20" width="280" height="164"/>
+  <text class="h" x="126" y="344">Agency user</text>
+  <text class="p" x="126" y="381">Selects a London area</text>
+  <text class="p" x="126" y="410">and business category</text>
+
+  <rect class="cloud" x="528" y="245" rx="24" width="480" height="292"/>
+  <text class="small" x="560" y="292">GOOGLE CLOUD · CLOUD RUN</text>
+  <text class="h" x="560" y="338">Goldmine orchestration API</text>
+  <text class="p" x="560" y="377">1. Discover and qualify local candidates</text>
+  <text class="p" x="560" y="409">2. Run 10 visible AI customer queries in parallel</text>
+  <text class="p" x="560" y="441">3. Score reputation × AI visibility gap</text>
+  <text class="p" x="560" y="473">4. Generate selected-prospect outreach draft</text>
+
+  <rect class="google" x="1162" y="190" rx="20" width="330" height="136"/>
+  <text class="h" x="1194" y="240">Google Places API</text>
+  <text class="p" x="1194" y="276">Candidates, ratings, reviews</text>
+
+  <rect class="google" x="1162" y="382" rx="20" width="330" height="136"/>
+  <text class="h" x="1194" y="432">Vertex AI · Gemini</text>
+  <text class="p" x="1194" y="468">Grounded AI visibility checks</text>
+
+  <rect class="google" x="1162" y="574" rx="20" width="330" height="136"/>
+  <text class="h" x="1194" y="624">PageSpeed Insights</text>
+  <text class="p" x="1194" y="660">Selected-site evidence</text>
+
+  <rect class="db" x="528" y="654" rx="20" width="480" height="138"/>
+  <text class="h" x="560" y="709">Cloud Firestore</text>
+  <text class="p" x="560" y="746">Runs, named queries and scored prospects</text>
+
+  <rect class="box" x="94" y="654" rx="20" width="280" height="138"/>
+  <text class="h" x="126" y="709">Evidence-led output</text>
+  <text class="p" x="126" y="746">Gold score, audit, draft email</text>
+
+  <path class="arrow" d="M374 374 H528"/>
+  <path class="arrow" d="M1008 305 H1162"/>
+  <path class="arrow" d="M1008 445 H1162"/>
+  <path class="arrow" d="M1008 500 C1080 560,1080 642,1162 642"/>
+  <path class="arrow" d="M768 537 V654"/>
+  <path class="arrow" d="M528 723 H374"/>
+  <text class="small" x="105" y="843">DEPLOYMENT: GITHUB MAIN → CLOUD BUILD → CLOUD RUN</text>
+</svg>
