@@ -2695,7 +2695,10 @@ app.post("/api/outreach/:placeId", async (req: Request, res: Response) => {
     return;
   }
 
-  if (business.discovery?.brand_check_status === "pending" || business.discovery?.brand_check_status === undefined) {
+  // Retry any non-positive check here. Earlier versions could persist an
+  // “unverified” result from an incomplete text match; keeping that result as
+  // a permanent gate meant the corrected verifier was never invoked.
+  if (business.discovery?.brand_check_status !== "verified") {
     await verifyMultiLocationBrands([business], business.discovery?.scope || "London, UK");
     await dbSaveBusiness(business.place_id, business);
   }
