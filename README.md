@@ -51,6 +51,19 @@ npm run build
 npm start
 ```
 
+## Reproducible testing
+
+Use a Google Cloud project with Vertex AI, Firestore and a restricted Google Places API key configured as described above.
+
+1. Start the application with `npm run dev`, then open `http://localhost:3000`.
+2. Confirm `http://localhost:3000/api/health` returns `"status":"ok"` and `"authMode":"vertex"`.
+3. Select any supported London area and a category, then run a scan. Wait for all six workflow stages to complete.
+4. Confirm the results table shows a Google Places candidate cohort with rating, reputation, AI visibility and Gold score values. Open one candidate with a completed AI measurement.
+5. Confirm the prospect page shows ten named customer queries, the corresponding Gemini evidence, the Gold-score calculation and the evidence boundary for the candidate cohort.
+6. Generate outreach only for a business that Goldmine has verified as an eligible independent prospect. Confirm the resulting draft is grounded in the rating, review and query evidence shown on the page.
+
+Google Places data, PageSpeed results and grounded Gemini responses are live external inputs, so exact businesses and values can change over time. The test is reproducible through the same area, category, configured Google Cloud project and completed workflow.
+
 ## Evidence and limits
 
 Goldmine reports the exact number of completed AI tests and never treats a partial result as a complete measurement. AI visibility represents the completed named query set, rather than a universal ranking or a claim about all possible AI answers. Website audits and brand checks are selected-prospect work so the initial market scan remains responsive.
