@@ -28,6 +28,8 @@ The application runs on Google Cloud Run and uses:
 - PageSpeed Insights API for selected-business technical evidence
 - Cloud Build and GitHub `main` for deployment
 
+Goldmine began as a Google AI Studio prototype. The deployed agent workflow uses the Google Gen AI SDK with Gemini through Vertex AI, satisfying the hackathon's model, agent-framework and Google Cloud infrastructure requirements.
+
 ## Run locally
 
 Requirements: Node.js 22 or later, a Google Cloud project with Vertex AI access, a Firestore database and a restricted Maps API key with Places API (New) access.

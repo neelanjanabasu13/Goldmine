@@ -24,6 +24,10 @@ The product uses a TypeScript Vite frontend and an Express backend deployed to G
 
 The workflow keeps the initial scan fast by separating market discovery from selected-prospect enrichment, brand verification and outreach generation.
 
+## Google technology used
+
+Goldmine began as a prototype in Google AI Studio and is deployed on Google Cloud. It uses the Google Gen AI SDK with Gemini 3.7 Flash through Vertex AI for grounded AI-visibility checks and evidence-based outreach drafts. Google Cloud Run hosts the application and Cloud Firestore persists scan runs and prospect evidence. Google Places API (New) provides the local-business candidate cohort, while PageSpeed Insights API supplies selected-business website evidence. Cloud Build deploys the public GitHub `main` branch to Cloud Run.
+
 ## Challenges we ran into
 
 The product had to balance fast interaction with evidence quality. A Google Places search returns a candidate cohort, so the interface states that it is not a complete market census. AI visibility needs repeated, visible queries rather than a single opaque answer. We also had to move expensive per-business tasks out of the initial scan, while keeping the prospect detail useful and traceable.
@@ -59,6 +63,8 @@ https://arbiter13-git-920881052965.europe-west1.run.app/
 London has thousands of businesses that customers know and recommend. Their ratings, review history and repeat custom show genuine local demand. Yet a customer asking an AI assistant where to go may receive a short list that leaves many of those businesses out.
 
 Goldmine was built to make that gap visible and useful for agencies working on local SEO, websites and AI discoverability.
+
+Goldmine began as a prototype in Google AI Studio. Its production workflow uses the Google Gen AI SDK with Gemini 3.7 Flash through Vertex AI, running on Cloud Run with Firestore persistence. Google Places API (New) provides the candidate cohort, and PageSpeed Insights supports selected-business website evidence.
 
 The workflow begins with a specific London area and business category. Goldmine gathers a Google Places candidate cohort and measures each candidate's customer reputation through rating and review volume. It then tests ten realistic customer recommendation queries with Gemini. The business detail page shows every tested query, the corresponding answer, the measured AI visibility and the resulting Gold score.
 
