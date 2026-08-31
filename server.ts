@@ -819,11 +819,11 @@ function computeOpportunityValueEstimate(
 }
 
 function querySetKey(category: string, locality: string): string {
-  return crypto.createHash("sha256").update(`${category.toLowerCase().trim()}|${locality.toLowerCase().trim()}`).digest("hex");
+  return crypto.createHash("sha256").update(`v2|${category.toLowerCase().trim()}|${locality.toLowerCase().trim()}`).digest("hex");
 }
 
 async function dbGetQuerySet(category: string, locality: string): Promise<string[] | null> {
-  const key = `${category.toLowerCase().trim()}_${locality.toLowerCase().trim()}`;
+  const key = `v2_${category.toLowerCase().trim()}_${locality.toLowerCase().trim()}`;
   const found = store.query_sets[key];
   if (found && Array.isArray(found.queries) && found.queries.length > 0) {
     return found.queries;
@@ -838,7 +838,7 @@ async function dbGetQuerySet(category: string, locality: string): Promise<string
 }
 
 async function dbSaveQuerySet(category: string, locality: string, queries: string[]) {
-  const key = `${category.toLowerCase().trim()}_${locality.toLowerCase().trim()}`;
+  const key = `v2_${category.toLowerCase().trim()}_${locality.toLowerCase().trim()}`;
   const data = {
     queries,
     category,
@@ -1615,7 +1615,7 @@ function parseGroundedBatch(
 }
 
 // -------------------------------------------------------------
-// Gemini Call: Query Generation (Cached per locality)
+// Customer Query Set (deterministic, cached per scoped location)
 // -------------------------------------------------------------
 async function getOrGenerateQueries(category: string, locality: string): Promise<string[]> {
   const cached = await dbGetQuerySet(category, locality);
@@ -1623,50 +1623,24 @@ async function getOrGenerateQueries(category: string, locality: string): Promise
     return cached;
   }
 
-  const ai = getGenAI();
-  const prompt = `Generate ${CUSTOMER_QUERY_COUNT} search queries a real customer in ${locality} would type or ask when looking for a ${category} business. Mix general intent (e.g. "best ${category.toLowerCase()} in ${locality}"), quality intent and specific-need intent. Return a JSON array of ${CUSTOMER_QUERY_COUNT} strings only.`;
-
-  try {
-    const resp = await callGeminiWithRetry(ai, {
-      model: MODEL,
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-      },
-    });
-
-    let queries: string[] = [];
-    const text = resp.text?.trim() || "[]";
-    const parsed = JSON.parse(text);
-    if (Array.isArray(parsed)) {
-      queries = parsed.map((s) => String(s)).filter((s) => s.length > 0);
-    }
-
-    if (queries.length < CUSTOMER_QUERY_COUNT) {
-      while (queries.length < CUSTOMER_QUERY_COUNT) {
-        queries.push(`best ${category.toLowerCase()} in ${locality} ${queries.length + 1}`);
-      }
-    }
-    queries = queries.slice(0, CUSTOMER_QUERY_COUNT);
-    await dbSaveQuerySet(category, locality, queries);
-    return queries;
-  } catch (err) {
-    console.warn(`Error generating queries from Gemini for ${category}_${locality}, using fallback:`, err);
-    const fallbackQueries = [
-      `best ${category.toLowerCase()} in ${locality}`,
-      `top rated ${category.toLowerCase()} near me in ${locality}`,
-      `where to find ${category.toLowerCase()} in ${locality}`,
-      `recommended ${category.toLowerCase()} in ${locality}`,
-      `affordable ${category.toLowerCase()} in ${locality}`,
-      `trusted ${category.toLowerCase()} ${locality}`,
-      `find ${category.toLowerCase()} open now in ${locality}`,
-      `highest review ${category.toLowerCase()} in ${locality}`,
-      `local ${category.toLowerCase()} ${locality}`,
-      `top 10 ${category.toLowerCase()} in ${locality}`,
-    ];
-    await dbSaveQuerySet(category, locality, fallbackQueries);
-    return fallbackQueries;
-  }
+  // These are intentionally visible, repeatable customer intents—not
+  // model-invented prompts. This removes a second Gemini request, makes scans
+  // comparable over time, and preserves exactly ten queries for every scan.
+  const categoryLabel = category.toLowerCase();
+  const queries = [
+    `best ${categoryLabel} in ${locality}`,
+    `top rated ${categoryLabel} near me in ${locality}`,
+    `recommended ${categoryLabel} in ${locality}`,
+    `affordable ${categoryLabel} in ${locality}`,
+    `trusted ${categoryLabel} in ${locality}`,
+    `family friendly ${categoryLabel} in ${locality}`,
+    `date night ${categoryLabel} in ${locality}`,
+    `${categoryLabel} open now in ${locality}`,
+    `local ${categoryLabel} in ${locality}`,
+    `where should I go for ${categoryLabel} in ${locality}`,
+  ];
+  await dbSaveQuerySet(category, locality, queries);
+  return queries;
 }
 
 // -------------------------------------------------------------
