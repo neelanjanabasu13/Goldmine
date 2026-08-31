@@ -1376,10 +1376,16 @@ async function verifyMultiLocationBrands(businesses: any[], location: string) {
         // business names (for example “KIN”) are often returned with a longer
         // display name, which previously produced a false zero-location result
         // and blocked an otherwise valid outreach draft.
-        return String(place.id || "") === String(business.place_id || "")
+        // Places can return either the bare identifier or a `places/<id>`
+        // resource name. Compare the canonical ID so the selected venue is
+        // not falsely treated as absent from its own verification search.
+        const canonicalPlaceId = String(place.id || "").replace(/^places\//, "");
+        return canonicalPlaceId === String(business.place_id || "")
           || brandSearchTerm(placeName) === term;
       });
-      const locationCount = new Set(matchingPlaces.map((place: any) => String(place.id || "")).filter(Boolean)).size;
+      const locationCount = new Set(matchingPlaces
+        .map((place: any) => String(place.id || "").replace(/^places\//, ""))
+        .filter(Boolean)).size;
       business.discovery = {
         ...(business.discovery || {}),
         brand_check_market: parentMarket,
