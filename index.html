@@ -452,7 +452,7 @@
               <div class="biz-name" id="detailBizName">Business Name</div>
               <div class="biz-addr" id="detailBizAddr">Category · Locality</div>
             </div>
-            <div class="coin"><strong id="detailGoldScore">0</strong><em>GOLD</em></div>
+            <div class="coin"><strong id="detailGoldScore">0</strong><em id="detailGoldLabel">GOLD</em></div>
           </div>
           <div class="split">
             <div class="half customers">
@@ -1003,7 +1003,7 @@
         liveNotice.style.display = analysisInProgress ? "block" : "none";
         liveNotice.textContent = analysisInProgress
           ? "Your independent-business shortlist is ready. Gold scores and evidence are still being built in the background."
-          : "Evidence collection is complete. Gold and outreach are shown only where all ten grounded customer queries completed.";
+          : "Gold scores based on 6–9 completed queries are labelled provisional. Full ten-query evidence is required before outreach can be sent.";
 
         const tbody = document.getElementById("resultsTableBody");
         tbody.innerHTML = "";
@@ -1011,6 +1011,7 @@
         results.forEach((b) => {
           const tr = document.createElement("tr");
           const completeEvidence = hasCompleteAiVisibility(b);
+          const scoredEvidence = hasScoredAiVisibility(b);
           const testedCount = Array.isArray(b.ai?.queries)
             ? b.ai.queries.filter((query) => query?.status === "tested").length
             : 0;
@@ -1025,11 +1026,11 @@
             </td>
             <td style="text-align: right;">${b.rating || 0}★ <span style="color: var(--faint); font-size: 13px;">(${b.review_count || 0})</span></td>
             <td style="text-align: right; color: var(--pos); font-weight: 600;">${b.quality?.score || 0}</td>
-            <td style="text-align: right; color: ${completeEvidence && b.ai?.visibility < 40 ? 'var(--neg)' : 'var(--faint)'}; font-weight: 600;">${visibilityLabel}</td>
-            <td class="goldcell">${completeEvidence ? b.gold_score : '—'}</td>
+            <td style="text-align: right; color: ${scoredEvidence && b.ai?.visibility < 40 ? 'var(--neg)' : 'var(--faint)'}; font-weight: 600;">${visibilityLabel}</td>
+            <td class="goldcell">${scoredEvidence ? `${b.gold_score}${completeEvidence ? '' : '<small style="display:block; font-size:10px; color:var(--faint);">PROVISIONAL</small>'}` : '—'}</td>
           `;
 
-          if (completeEvidence) {
+          if (scoredEvidence) {
             tr.addEventListener("click", () => {
               currentBusiness = b;
               renderDetailView(b, runDoc);
@@ -1067,6 +1068,8 @@
         const mentions = testedQueries.filter((q) => q.mentioned).length;
         const totalTested = testedQueries.length;
         const aiMeasured = totalTested > 0;
+        const scoredEvidence = hasScoredAiVisibility(b);
+        const fullEvidence = hasCompleteAiVisibility(b);
         const visibility = aiMeasured ? Math.round((100 * mentions) / totalTested) : null;
 
         document.getElementById("detailBizName").textContent = b.name || "Business";
@@ -1079,16 +1082,18 @@
         if (totalTested === 0) {
           verdictText += "AI visibility not measured for this business.";
         } else if (visibility === 0) {
-          verdictText += "Gemini has never heard of them.";
+          verdictText += "Customers already rate them highly, yet they were not named in the completed AI searches. That mismatch is why this is a Goldmine opportunity.";
         } else {
-          verdictText += `Visible in only ${visibility}% of AI customer searches.`;
+          verdictText += `They were visible in ${visibility}% of the completed AI customer searches. ${scoredEvidence ? "Strong customer proof paired with weaker AI visibility is the Goldmine: a credible business with room to be found." : "More AI evidence is needed before Goldmine can score the opportunity."}`;
         }
+        if (scoredEvidence && !fullEvidence) verdictText += ` This is a provisional Gold score based on ${totalTested} of 10 completed tests.`;
         document.getElementById("detailVerdict").textContent = verdictText;
 
         // Top Card Numbers (Count-up)
-        const goldScore = aiMeasured ? Math.round(Number(b.gold_score || 0)) : null;
-        if (aiMeasured) animateCountUp(document.getElementById("detailGoldScore"), goldScore, 600);
+        const goldScore = scoredEvidence ? Math.round(Number(b.gold_score || 0)) : null;
+        if (scoredEvidence) animateCountUp(document.getElementById("detailGoldScore"), goldScore, 600);
         else document.getElementById("detailGoldScore").textContent = "—";
+        document.getElementById("detailGoldLabel").textContent = fullEvidence ? "GOLD" : scoredEvidence ? "PROVISIONAL" : "PENDING";
         animateCountUp(document.getElementById("detailRating"), b.rating || 0, 600, "", "", 1);
         document.getElementById("detailReviewCount").textContent = `from ${(b.review_count || 0).toLocaleString()} customer reviews`;
         if (aiMeasured) animateCountUp(document.getElementById("detailAiVis"), visibility, 600, "", "%");
@@ -1097,7 +1102,7 @@
         if (totalTested === 0) {
           document.getElementById("detailAiVisNote").textContent = "AI visibility not measured for this business";
         } else {
-          document.getElementById("detailAiVisNote").textContent = `named in ${mentions} of ${totalTested} searches customers actually make`;
+          document.getElementById("detailAiVisNote").textContent = `named in ${mentions} of ${totalTested} completed searches${fullEvidence ? "" : " · provisional evidence"}`;
         }
 
         document.getElementById("detailRecService").textContent = b.recommended_service || "SEO, websites and AI visibility";
@@ -1422,6 +1427,10 @@
         return queries.length === 10
           && Number(business?.ai?.total || 0) === 10
           && queries.every((query) => query?.status === "tested");
+      }
+
+      function hasScoredAiVisibility(business) {
+        return business?.score_status === "measured" || business?.score_status === "provisional";
       }
 
       // Initialize on load

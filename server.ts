@@ -1952,7 +1952,7 @@ async function runDiscoveryPipeline(
     });
 
     // ---------------------------------------------------------
-    // Phase 3 & 4: Auditing & AI Testing (Concurrent execution)
+    // Phase 3: Fast AI visibility testing
     // ---------------------------------------------------------
     await dbSaveRun(runId, {
       status: "running",
@@ -1960,7 +1960,9 @@ async function runDiscoveryPipeline(
       stage_status: {
         discovering: "done",
         qualifying: "done",
-        auditing: "running",
+        // Website crawling, PageSpeed and contact extraction are detail-page
+        // work. They must never hold a local market scan hostage.
+        auditing: "deferred",
         testing: "running",
         comparing: "not_implemented",
         complete: "not_implemented",
@@ -1975,7 +1977,6 @@ async function runDiscoveryPipeline(
       stage_durations_sec: { ...stageTimings },
     });
 
-    const mapsApiKey = process.env.MAPS_API_KEY || "";
     const ai = getGenAI();
 
     let auditedOpportunities = 0;
@@ -1983,7 +1984,11 @@ async function runDiscoveryPipeline(
     // Task A: audit only the highest-quality eligible businesses. PageSpeed and
     // contact crawling are the costly work; the full eligible cohort still gets
     // the same ten-query visibility measurement below.
-    const auditPromise = (async () => {
+    // Retained temporarily as the implementation for the forthcoming
+    // on-demand business-analysis endpoint. Do not invoke it from a market
+    // scan: a few slow websites can otherwise add minutes to every request.
+    const buildLegacyAuditPromise = () => (async () => {
+      const mapsApiKey = process.env.MAPS_API_KEY || "";
       const auditStart = Date.now();
       await runWithConcurrency(auditCandidates, 10, async (b) => {
         let homepageText = "";
@@ -2102,6 +2107,20 @@ async function runDiscoveryPipeline(
         },
         stage_timings: { ...stageTimings },
         stage_durations_sec: { ...stageTimings },
+      });
+    })();
+
+    const auditPromise = (async () => {
+      const currentDoc = await dbGetRun(runId);
+      await dbSaveRun(runId, {
+        stage_status: {
+          ...(currentDoc?.stage_status || {}),
+          auditing: "deferred",
+        },
+        stage_counts: {
+          ...(currentDoc?.stage_counts || {}),
+          auditing: 0,
+        },
       });
     })();
 
@@ -2393,12 +2412,17 @@ async function runDiscoveryPipeline(
     // visibility_score = round(0.7 * ai.visibility + 0.3 * site_health)
     // gold_score = round(quality.score * (100 - visibility_score) / 100)
     for (const b of top20) {
-      const siteHealth = b.site.no_website
-        ? 0
-        : Math.round(((b.site.performance || 0) + (b.site.seo || 0)) / 2);
+      const siteHealth = b.site.audited
+        ? (b.site.no_website ? 0 : Math.round(((b.site.performance || 0) + (b.site.seo || 0)) / 2))
+        : null;
       const aiComplete = hasCompleteAiVisibility(b);
-      const visibilityScore = aiComplete
-        ? Math.round(0.7 * b.ai.visibility + 0.3 * siteHealth)
+      const testedCount = Number(b.ai?.total || 0);
+      // Six successful, individually recorded queries are enough to show a
+      // clearly-labelled provisional opportunity score. Full evidence remains
+      // required for final Gold status and any outreach action.
+      const hasProvisionalEvidence = testedCount >= 6;
+      const visibilityScore = hasProvisionalEvidence
+        ? (siteHealth === null ? b.ai.visibility : Math.round(0.7 * b.ai.visibility + 0.3 * siteHealth))
         : null;
       const goldScore = visibilityScore === null
         ? null
@@ -2407,7 +2431,7 @@ async function runDiscoveryPipeline(
       b.site_health = siteHealth;
       b.visibility_score = visibilityScore;
       b.gold_score = goldScore;
-      b.score_status = aiComplete ? "measured" : (hasMeasuredAiVisibility(b) ? "partial" : "unmeasured");
+      b.score_status = aiComplete ? "measured" : (hasProvisionalEvidence ? "provisional" : "unmeasured");
 
       // Deterministic service mapping
       const { service } = determineServiceRecommendation(b, services);
@@ -2423,8 +2447,8 @@ async function runDiscoveryPipeline(
 
     // Sort descending by gold_score
     top20.sort((a, b) => {
-      const aMeasured = hasCompleteAiVisibility(a);
-      const bMeasured = hasCompleteAiVisibility(b);
+      const aMeasured = a.score_status === "measured" || a.score_status === "provisional";
+      const bMeasured = b.score_status === "measured" || b.score_status === "provisional";
       if (aMeasured !== bMeasured) return aMeasured ? -1 : 1;
       if (aMeasured && b.gold_score !== a.gold_score) {
         return Number(b.gold_score) - Number(a.gold_score);
@@ -2447,7 +2471,7 @@ async function runDiscoveryPipeline(
       stage_status: {
         discovering: "done",
         qualifying: "done",
-        auditing: "done",
+        auditing: "deferred",
         testing: "done",
         comparing: "done",
         complete: "done",
@@ -2457,7 +2481,7 @@ async function runDiscoveryPipeline(
         qualifying: qualifiedCount,
         outreach_eligible: top20.length,
         excluded_multi_location: excludedMultiLocationCount,
-        auditing: auditedOpportunities || qualifiedCount,
+        auditing: auditedOpportunities,
         testing: top20.length,
         comparing: resolvedCompetitors.length,
         complete: top20.length,
