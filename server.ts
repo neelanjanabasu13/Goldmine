@@ -1365,7 +1365,13 @@ async function verifyMultiLocationBrands(businesses: any[], location: string) {
         const placeName = typeof place.displayName === "object"
           ? String(place.displayName.text || "")
           : String(place.displayName || "");
-        return brandSearchTerm(placeName) === term;
+        // The candidate already came from Places. Treat its exact Place ID as
+        // a match as well as its normalised display name: short or stylised
+        // business names (for example “KIN”) are often returned with a longer
+        // display name, which previously produced a false zero-location result
+        // and blocked an otherwise valid outreach draft.
+        return String(place.id || "") === String(business.place_id || "")
+          || brandSearchTerm(placeName) === term;
       });
       const locationCount = new Set(matchingPlaces.map((place: any) => String(place.id || "")).filter(Boolean)).size;
       business.discovery = {
