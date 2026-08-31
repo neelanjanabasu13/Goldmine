@@ -231,8 +231,9 @@
           <input
             id="inputLocation"
             type="text"
-            value="Soho, London"
-            placeholder="Borough, neighbourhood or postcode (e.g. Soho, London)"
+            value="Soho"
+            aria-label="Area in London"
+            placeholder="Area in London (e.g. Highgate, Soho or W1)"
           />
           <select id="selectCategory">
             <option value="Restaurants and cafés" selected>Restaurants and cafés</option>
@@ -251,14 +252,9 @@
             <option value="Retail">Retail</option>
             <option value="Hospitality">Hospitality</option>
           </select>
-          <input
-            id="inputServices"
-            type="text"
-            value="SEO, websites and AI visibility"
-            placeholder="Services offered"
-          />
           <button id="btnFindGold" class="btn btn-primary">FIND GOLD</button>
         </div>
+        <p class="scope-help">London only. Use the area people actually call it — Goldmine handles the search boundaries behind the scenes.</p>
 
         <div id="indexStatsLine" class="indexline">
           Loading index stats...
@@ -644,9 +640,14 @@
       // 2. Start Scan & Agent Execution
       // -----------------------------------------------------------
       document.getElementById("btnFindGold").addEventListener("click", async () => {
-        const location = document.getElementById("inputLocation").value.trim() || "London";
+        const location = document.getElementById("inputLocation").value.trim();
         const category = document.getElementById("selectCategory").value;
-        const services = document.getElementById("inputServices").value.trim() || "SEO, websites and AI visibility";
+        const services = "SEO, websites and AI visibility";
+
+        if (!location) {
+          alert("Enter an area in London, for example Highgate, Soho or W1.");
+          return;
+        }
 
         // Fetch estimates for category
         try {

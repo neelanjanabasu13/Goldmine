@@ -1202,8 +1202,27 @@ function isBroadMarketLocation(location: string): boolean {
 
 function requireBoundedLocation(location: string) {
   if (isBroadMarketLocation(location)) {
-    throw new Error("Choose a borough, neighbourhood or postcode district (for example, Soho, London or W1) rather than the whole of London. Google Places returns a capped candidate cohort, not a city-wide market census.");
+    throw new Error("Enter a London area such as Highgate, Soho or W1 rather than the whole of London. Goldmine searches a defined local area, not a city-wide market census.");
   }
+}
+
+/**
+ * The UI deliberately asks for the place name a person knows, rather than an
+ * administrative unit. Keeping the London constraint server-side prevents a
+ * query such as "Highgate" resolving to the wrong city, without making a
+ * customer learn borough boundaries. A later coverage-index pass can replace
+ * this text scope with authoritative GLA/ONS polygons without changing the UI.
+ */
+function resolveLondonArea(rawLocation: string): { label: string; searchScope: string } {
+  const label = rawLocation.replace(/\s+/g, " ").trim().replace(/,+$/, "");
+  if (!label) throw new Error("Enter an area in London, for example Highgate, Soho or W1.");
+  if (isBroadMarketLocation(label)) requireBoundedLocation(label);
+
+  const alreadyLondonScoped = /\b(london|uk|united kingdom|england)\b/i.test(label);
+  return {
+    label,
+    searchScope: alreadyLondonScoped ? label : `${label}, London, UK`,
+  };
 }
 
 function getParentMarket(location: string): string {
@@ -2301,11 +2320,13 @@ app.get("/api/health", async (req: Request, res: Response) => {
 const handleRunCreation = async (req: Request, res: Response) => {
   const body = req.body || {};
   const category = String(body.category || "Restaurants and cafés").trim();
-  const location = String(body.location || "London").trim();
+  const requestedArea = String(body.location || "").trim();
   const services = String(body.services || "SEO, websites and AI visibility").trim();
+  let location: string;
 
   try {
-    requireBoundedLocation(location);
+    const resolvedArea = resolveLondonArea(requestedArea);
+    location = resolvedArea.searchScope;
   } catch (err: any) {
     res.status(400).json({ error: String(err?.message || err) });
     return;
