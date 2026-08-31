@@ -527,25 +527,18 @@
           <div id="competitorCard"></div>
         </div>
 
-        <!-- Section 4: What this is costing them -->
+        <!-- Section 4: Opportunity scenario -->
         <div class="section rise in d4">
-          <div class="lab">WHAT THIS IS COSTING THEM</div>
+          <div class="lab">ESTIMATE THE LOCAL OPPORTUNITY</div>
           <div class="maths" id="detailCostCard"></div>
         </div>
 
-        <!-- Section 5: The Score Formula -->
-        <div class="section rise">
-          <div class="lab">THE SCORE</div>
-          <div class="formula" id="detailScoreFormula">
-            gold_score = quality × (100 - visibility) / 100
-          </div>
-        </div>
-
-        <!-- Section 6: Send Outreach Email -->
+        <!-- Section 5: Send Outreach Email -->
         <div class="section rise" style="margin-top: 44px;">
           <button id="btnSendOutreach" class="btn btn-primary" style="width: 100%; padding: 18px 24px; font-size: 16px;">
             SEND THIS PROSPECT AN EMAIL
           </button>
+          <p id="outreachProgress" aria-live="polite" style="display: none; margin: 12px 0 0; text-align: center; color: var(--muted); font-size: 14px;"></p>
 
           <div id="outreachPanel" class="email" style="display: none; margin-top: 20px;">
             <div class="to">
@@ -1275,18 +1268,6 @@
         // 4. WHAT THIS IS COSTING THEM
         setupValueCalculator(b, category);
 
-        // 5. THE SCORE
-        const quality = b.quality?.score || 0;
-        if (aiMeasured) {
-          const vis = visibility;
-          const calculatedGold = Math.round((quality * (100 - vis)) / 100);
-          document.getElementById("detailScoreFormula").textContent =
-            `gold_score = ${quality} × (100 - ${vis}) / 100 = ${calculatedGold}`;
-        } else {
-          document.getElementById("detailScoreFormula").textContent =
-            "Gold score unavailable until at least one customer query is successfully tested.";
-        }
-
         // Reset Outreach UI
         document.getElementById("outreachPanel").style.display = "none";
         const outreachButton = document.getElementById("btnSendOutreach");
@@ -1302,7 +1283,7 @@
       }
 
       // -----------------------------------------------------------
-      // 4. Value Arithmetic Calculator & Guard Rails
+      // 4. Opportunity Scenario Calculator
       // -----------------------------------------------------------
       function setupValueCalculator(b, category) {
         const costCard = document.getElementById("detailCostCard");
@@ -1318,49 +1299,38 @@
           return;
         }
 
+        const mentions = testedQueries.filter((q) => q.mentioned).length;
+        const visibilityGap = Math.round((1 - (mentions / totalTested)) * 100);
         costCard.innerHTML = `
-          <p>
-            <input id="inputMonthlySearches" type="number" value="1000" /> monthly searches ×
-            <span id="calcVisGap" class="out">0%</span> visibility gap =
-            <span id="calcMissedCust" class="out" style="color: var(--neg);">0</span> customers who never see them.
+          <p><span class="out" id="calcVisGap">${visibilityGap}%</span> of the completed AI queries did not name this business.</p>
+          <p style="margin-top: 8px;">Enter your own local-demand assumptions to model a possible outcome.</p>
+          <p style="margin-top: 14px;">
+            <input id="inputMonthlySearches" type="number" min="0" placeholder="monthly local searches" aria-label="Monthly local searches" /> ×
+            <input id="inputConvRate" type="number" min="0" max="100" step="0.1" placeholder="conversion %" aria-label="Conversion rate" />% ×
+            GBP <input id="inputAvgSpend" type="number" min="0" step="0.01" placeholder="customer value" aria-label="Average customer value" />
           </p>
-          <p style="margin-top: 8px;">
-            <span id="calcMissedCust2" class="out">0</span> ×
-            <input id="inputConvRate" type="number" value="5" />% conversion ×
-            GBP <input id="inputAvgSpend" type="number" value="35" /> average spend =
-            <span id="calcMonthlyVal" class="out">GBP 0</span> a month,
-            <span id="calcAnnualVal" class="out">GBP 0</span> a year.
-          </p>
-          <span class="caveat">Estimate based on the assumptions above. Change any of them and the figure updates.</span>
+          <p id="calcOpportunity" style="margin-top: 10px; color: var(--muted);">Add all three assumptions to calculate a scenario.</p>
+          <span class="caveat">Goldmine does not infer search volume, conversion or revenue from a Google Places scan.</span>
         `;
 
-        const valEst = b.value_estimate || {};
         const searchesInput = document.getElementById("inputMonthlySearches");
         const convInput = document.getElementById("inputConvRate");
         const spendInput = document.getElementById("inputAvgSpend");
 
-        searchesInput.value = valEst.monthly_searches || 1000;
-        convInput.value = Math.round((valEst.conversion_rate || 0.05) * 100);
-        spendInput.value = valEst.avg_customer_value || 35;
-
         function recompute() {
-          const searches = Number(searchesInput.value) || 0;
-          const convRate = (Number(convInput.value) || 0) / 100;
-          const avgSpend = Number(spendInput.value) || 0;
+          const searches = Number(searchesInput.value);
+          const convRate = Number(convInput.value) / 100;
+          const avgSpend = Number(spendInput.value);
+          const result = document.getElementById("calcOpportunity");
+          if (!Number.isFinite(searches) || searches <= 0 || !Number.isFinite(convRate) || convRate <= 0 || !Number.isFinite(avgSpend) || avgSpend <= 0) {
+            result.textContent = "Add all three assumptions to calculate a scenario.";
+            return;
+          }
 
-          const mentions = testedQueries.filter((q) => q.mentioned).length;
-          const vis = totalTested > 0 ? mentions / totalTested : 0;
-          const visGap = Math.max(0, 1 - vis);
-
-          const missedCust = Math.round(searches * visGap);
+          const missedCust = Math.round(searches * (visibilityGap / 100));
           const monthlyVal = Math.round(missedCust * convRate * avgSpend);
           const annualVal = monthlyVal * 12;
-
-          document.getElementById("calcVisGap").textContent = `${Math.round(visGap * 100)}%`;
-          document.getElementById("calcMissedCust").textContent = missedCust.toLocaleString();
-          document.getElementById("calcMissedCust2").textContent = missedCust.toLocaleString();
-          document.getElementById("calcMonthlyVal").textContent = `GBP ${monthlyVal.toLocaleString()}`;
-          document.getElementById("calcAnnualVal").textContent = `GBP ${annualVal.toLocaleString()}`;
+          result.innerHTML = `At these assumptions, <span class="out">${missedCust.toLocaleString()}</span> missed discovery opportunities could equal <span class="out">GBP ${monthlyVal.toLocaleString()}</span> a month or <span class="out">GBP ${annualVal.toLocaleString()}</span> a year.`;
         }
 
         searchesInput.oninput = recompute;
@@ -1379,8 +1349,14 @@
           return;
         }
         const btn = document.getElementById("btnSendOutreach");
-        btn.textContent = "GENERATING OUTREACH...";
+        const progress = document.getElementById("outreachProgress");
+        btn.textContent = "WRITING YOUR OUTREACH EMAIL...";
         btn.disabled = true;
+        progress.textContent = "Hold tight. Goldmine is checking the scan evidence and drafting a personalised email.";
+        progress.style.display = "block";
+        const slowNotice = setTimeout(() => {
+          progress.textContent = "Still working. Your draft is being prepared.";
+        }, 3000);
 
         try {
           const resp = await fetch(`/api/outreach/${currentBusiness.place_id}`, {
@@ -1431,6 +1407,8 @@
           alert(err?.message || "Failed to draft outreach email. Please try again.");
           btn.textContent = "SEND THIS PROSPECT AN EMAIL";
         } finally {
+          clearTimeout(slowNotice);
+          progress.style.display = "none";
           btn.disabled = false;
         }
       });

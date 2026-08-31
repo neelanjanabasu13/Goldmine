@@ -782,15 +782,15 @@ function computeOpportunityValueEstimate(
   const avg_customer_value =
     typeof overrides?.avg_customer_value === "number" && overrides.avg_customer_value > 0
       ? overrides.avg_customer_value
-      : getAvgCustomerValue(category);
+      : null;
   const monthly_searches =
     typeof overrides?.monthly_searches === "number" && overrides.monthly_searches > 0
       ? overrides.monthly_searches
-      : 1000;
+      : null;
   const conversion_rate =
     typeof overrides?.conversion_rate === "number" && overrides.conversion_rate > 0
       ? overrides.conversion_rate
-      : 0.05;
+      : null;
 
   const total_queries =
     b.ai && typeof b.ai.total === "number"
@@ -799,7 +799,8 @@ function computeOpportunityValueEstimate(
 
   // Requirement 2c: If the number of tested queries is zero, do not compute or display a visibility gap,
   // a monthly value or an annual value. A 100% visibility gap must never be inferred from untested queries.
-  if (total_queries === 0) {
+  const hasRevenueAssumptions = avg_customer_value !== null && monthly_searches !== null && conversion_rate !== null;
+  if (total_queries === 0 || !hasRevenueAssumptions) {
     return {
       avg_customer_value,
       monthly_searches,
@@ -2679,6 +2680,7 @@ app.post("/api/outreach/:placeId", async (req: Request, res: Response) => {
   // A run is the authoritative evidence snapshot for this action. Prefer its
   // fully completed result over an older business document, which may have
   // been saved by a previous partial scan of the same place.
+  const persistedBusiness = await dbGetBusiness(placeId);
   let business: any = null;
   const runs = await dbListRuns();
   const matchingRunResults = runs
@@ -2693,7 +2695,7 @@ app.post("/api/outreach/:placeId", async (req: Request, res: Response) => {
   if (matchingRunResults.length > 0) {
     business = matchingRunResults[0].candidate;
   } else {
-    business = await dbGetBusiness(placeId);
+    business = persistedBusiness;
   }
 
   if (!business) {
@@ -2710,10 +2712,34 @@ app.post("/api/outreach/:placeId", async (req: Request, res: Response) => {
     return;
   }
 
+  // A draft is generated only after the independence gate has passed. Reuse it
+  // on later clicks so opening the same prospect does not make another model call.
+  if (!business.outreach && persistedBusiness?.outreach) {
+    business.outreach = persistedBusiness.outreach;
+  }
+  if (typeof business.outreach === "string" && business.outreach.trim()) {
+    const outreachText = business.outreach.trim();
+    const subjectMatch = outreachText.match(/^Subject:\s*(.+)$/im);
+    const subject = subjectMatch ? subjectMatch[1].trim() : `AI search footprint for ${business.name}`;
+    const bodyText = subjectMatch
+      ? outreachText.replace(/^Subject:\s*.+\n+/i, "").trim()
+      : outreachText;
+    res.json({
+      outreach: outreachText,
+      subject,
+      body: bodyText,
+      email: business.contact?.email || persistedBusiness?.contact?.email || null,
+      source_url: business.contact?.source_url || persistedBusiness?.contact?.source_url || null,
+      place_id: business.place_id,
+      name: business.name,
+    });
+    return;
+  }
+
   // Retry any non-positive check here. Earlier versions could persist an
   // “unverified” result from an incomplete text match; keeping that result as
   // a permanent gate meant the corrected verifier was never invoked.
-  if (business.discovery?.brand_check_status !== "verified") {
+  if (business.discovery?.brand_check_status !== "verified" && business.discovery?.brand_check_status !== "candidate_verified") {
     await verifyMultiLocationBrands([business], business.discovery?.scope || "London, UK");
     // The scan already has deterministic local evidence for a business with a
     // unique website domain occurring once in its candidate cohort. A missing
@@ -2776,9 +2802,10 @@ Open with the observation about their reputation, state the gap with one number,
       {
         model: MODEL,
         contents: prompt,
+        config: { maxOutputTokens: 300, temperature: 0.3 },
       },
-      2,
-      1500
+      1,
+      500
     );
 
     let outreachText = (resp.text || "").trim();
