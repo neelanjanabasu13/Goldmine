@@ -1206,6 +1206,75 @@ function requireBoundedLocation(location: string) {
   }
 }
 
+function getParentMarket(location: string): string {
+  const parts = location.split(",").map((part) => part.trim()).filter(Boolean);
+  return parts.length > 1 ? parts[parts.length - 1] : location;
+}
+
+function brandSearchTerm(name: string): string | null {
+  const key = nameBrandKey(name);
+  return key ? key.replace(/^name:/, "") : null;
+}
+
+async function verifyMultiLocationBrands(businesses: any[], location: string) {
+  const mapsApiKey = process.env.MAPS_API_KEY;
+  if (!mapsApiKey || businesses.length === 0) return;
+
+  const parentMarket = getParentMarket(location);
+  const url = "https://places.googleapis.com/v1/places:searchText";
+  const headers = {
+    "Content-Type": "application/json",
+    "X-Goog-Api-Key": mapsApiKey,
+    "X-Goog-FieldMask": "places.id,places.displayName,places.formattedAddress",
+  };
+
+  // Places has no chain/brand entity. Verify the brand term separately in the
+  // parent city so a single branch returned by the initial scoped search is not
+  // mistaken for an independent prospect.
+  await runWithConcurrency(businesses, 8, async (business) => {
+    if (business.discovery?.outreach_eligible === false) return;
+    const term = brandSearchTerm(business.name || "");
+    if (!term) return;
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), PLACES_REQUEST_TIMEOUT_MS);
+      const response = await fetch(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ textQuery: `${term} ${parentMarket}`, pageSize: 20 }),
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      if (!response.ok) return;
+      const data: any = await response.json();
+      const matchingPlaces = (data.places || []).filter((place: any) => {
+        const placeName = typeof place.displayName === "object"
+          ? String(place.displayName.text || "")
+          : String(place.displayName || "");
+        return brandSearchTerm(placeName) === term;
+      });
+      const locationCount = new Set(matchingPlaces.map((place: any) => String(place.id || "")).filter(Boolean)).size;
+      business.discovery = {
+        ...(business.discovery || {}),
+        brand_check_market: parentMarket,
+        brand_check_locations: locationCount,
+        brand_check_status: "verified",
+      };
+      if (locationCount > 1) {
+        business.discovery.outreach_eligible = false;
+        business.discovery.brand_group_size = Math.max(Number(business.discovery.brand_group_size || 1), locationCount);
+        business.discovery.exclusion_reason = `Google Places found ${locationCount} locations for this brand in ${parentMarket}.`;
+      }
+    } catch (error) {
+      console.warn(`Brand verification failed for ${business.name}:`, error);
+      business.discovery = {
+        ...(business.discovery || {}),
+        brand_check_status: "unavailable",
+      };
+    }
+  });
+}
+
 function computeQualityAndFilter(businesses: any[]): any[] {
   // Drop anything under 20 reviews
   const qualified = businesses.filter((b) => (b.review_count || 0) >= 20);
@@ -1681,6 +1750,7 @@ async function runDiscoveryPipeline(
     });
 
     const qualified = computeQualityAndFilter(normalized);
+    await verifyMultiLocationBrands(qualified, location);
     const top20 = qualified.filter((business) => business.discovery?.outreach_eligible !== false);
     const qualifiedCount = qualified.length;
     const excludedMultiLocationCount = qualifiedCount - top20.length;
