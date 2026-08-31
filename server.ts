@@ -1393,11 +1393,19 @@ async function verifyMultiLocationBrands(businesses: any[], location: string) {
         brand_check_status: locationCount === 0 ? "unverified" : "verified",
       };
       if (locationCount === 0) {
-        // A failed name match is not proof of independence. Keep the prospect
-        // out of outreach until a later, stronger verification source can
-        // identify the brand safely.
-        business.discovery.outreach_eligible = false;
-        business.discovery.exclusion_reason = "Goldmine could not verify this business as a single-location independent brand.";
+        // A missing result from this supplementary lookup is not positive
+        // evidence of a chain. The business itself was returned by Places in
+        // the chosen local area and a unique website domain appeared only once
+        // in that cohort. Treat that as sufficient selected-candidate evidence
+        // for a draft, while positive multi-location evidence above still
+        // blocks outreach.
+        const uniqueLocalDomain = String(business.discovery?.brand_key || "").startsWith("domain:")
+          && Number(business.discovery?.brand_group_size || 1) <= 1;
+        business.discovery.brand_check_status = uniqueLocalDomain ? "candidate_verified" : "unverified";
+        business.discovery.outreach_eligible = uniqueLocalDomain;
+        business.discovery.exclusion_reason = uniqueLocalDomain
+          ? null
+          : "Goldmine could not verify this business as a single-location independent brand.";
       } else if (locationCount > 1) {
         business.discovery.outreach_eligible = false;
         business.discovery.brand_group_size = Math.max(Number(business.discovery.brand_group_size || 1), locationCount);
@@ -2709,7 +2717,9 @@ app.post("/api/outreach/:placeId", async (req: Request, res: Response) => {
     await verifyMultiLocationBrands([business], business.discovery?.scope || "London, UK");
     await dbSaveBusiness(business.place_id, business);
   }
-  if (business.discovery?.outreach_eligible !== true || business.discovery?.brand_check_status !== "verified") {
+  const independentCheckPassed = business.discovery?.brand_check_status === "verified"
+    || business.discovery?.brand_check_status === "candidate_verified";
+  if (business.discovery?.outreach_eligible !== true || !independentCheckPassed) {
     res.status(422).json({ error: "Outreach is unavailable until Goldmine verifies this is a single-location independent business." });
     return;
   }
