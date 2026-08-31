@@ -88,12 +88,18 @@
       .controls input:focus,.controls select:focus{outline:3px solid rgba(15,107,112,.28);outline-offset:1px}
       .controls .btn{flex:0 0 auto;background:var(--ink);color:var(--paper);padding:14px 28px;font-size:15px}
       .scope-help{margin:14px 0 0;font-size:14px;color:var(--muted);font-weight:400}
-      .independent-statement{display:grid;grid-template-columns:minmax(170px,.8fr) minmax(0,2fr);gap:22px 28px;
-        margin:42px 0 10px;padding:30px 0;border-top:1px solid var(--hair);border-bottom:1px solid var(--hair)}
-      .statement-kicker{align-self:start;color:var(--teal);font-size:11px;font-weight:700;letter-spacing:.16em;line-height:1.35;text-transform:uppercase}
+      #viewLanding{text-align:center}
+      #viewLanding h1{margin-inline:auto}
+      #viewLanding .sub{margin-inline:auto}
+      #viewLanding .controls{max-width:820px;margin-inline:auto;justify-content:center}
+      #viewLanding .scope-help{text-align:center}
+      #viewLanding .indexline{text-align:center}
+      .independent-statement{max-width:790px;margin:42px auto 10px;padding:30px 0;border-top:1px solid var(--hair);border-bottom:1px solid var(--hair);text-align:center}
+      .statement-kicker{color:var(--teal);font-size:11px;font-weight:700;letter-spacing:.16em;line-height:1.35;text-transform:uppercase}
       .statement-copy{font-family:'Bricolage Grotesque',Outfit,sans-serif;font-size:clamp(29px,3.45vw,43px);font-weight:800;letter-spacing:-.045em;line-height:1.02;max-width:21ch}
+      .statement-copy{margin:14px auto 0}
       .statement-copy mark{background:var(--yellow);color:var(--ink);padding:0 .13em;border-radius:4px}
-      .statement-detail{grid-column:2;max-width:59ch;color:var(--muted);font-size:16px;line-height:1.55;font-weight:400}
+      .statement-detail{max-width:59ch;margin:18px auto 0;color:var(--muted);font-size:16px;line-height:1.55;font-weight:400}
       .indexline{font-size:13.5px;color:var(--faint);margin-top:14px;font-weight:300}
 
       /* ---------- scan screen ---------- */
@@ -201,8 +207,7 @@
       @media (max-width:820px){
         .wrap{padding:36px 20px 64px}
         .split{grid-template-columns:1fr}
-        .independent-statement{grid-template-columns:1fr;gap:14px;padding:25px 0}
-        .statement-detail{grid-column:1}
+        .independent-statement{padding:25px 0}
         .half.customers{border-right:0;border-bottom:2px solid var(--line)}
         .agent{grid-template-columns:1fr;gap:6px}
         .agent .stat{text-align:left}
