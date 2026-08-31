@@ -29,7 +29,10 @@ const GROUNDING_QUERY_CONCURRENCY = Math.max(1, Number(process.env.GROUNDING_QUE
 const GROUNDING_QUERY_TIMEOUT_MS = Math.max(1_000, Number(process.env.GROUNDING_QUERY_TIMEOUT_MS || 18_000));
 const VISIBILITY_STAGE_TIMEOUT_MS = Math.max(1_000, Number(process.env.VISIBILITY_STAGE_TIMEOUT_MS || 55_000));
 const PLACES_REQUEST_TIMEOUT_MS = Math.max(1_000, Number(process.env.PLACES_REQUEST_TIMEOUT_MS || 8_000));
-const PLACES_MAX_PAGES = Math.max(1, Math.min(3, Number(process.env.PLACES_MAX_PAGES || 3)));
+// Interactive scans use the first page from each independent discovery lens.
+// Pulling later pages is a coverage/indexing task, not something a person
+// should wait for before seeing an answer.
+const PLACES_MAX_PAGES = Math.max(1, Math.min(3, Number(process.env.PLACES_MAX_PAGES || 1)));
 const DISCOVERY_QUERY_VARIANTS = 3;
 
 function hasMeasuredAiVisibility(business: any): boolean {
@@ -1887,18 +1890,24 @@ async function runDiscoveryPipeline(
     });
 
     const qualified = computeQualityAndFilter(normalized);
-    // Score the whole returned cohort for a transparent reputation benchmark,
-    // then independently verify a bounded, larger shortlist. Verifying only
-    // the first ten used to mean that one chain-heavy result page produced an
-    // implausibly small lead list. We still never claim the whole cohort is
-    // independent until each business has passed its own brand check.
+    // Score the returned cohort for a transparent reputation benchmark. A
+    // separate Places lookup per business to prove brand ownership can take
+    // minutes; that belongs to the selected-business evidence job, not the
+    // interactive market scan. Candidates are explicitly not outreach-eligible
+    // until that deferred check completes.
     const rankedForVerification = qualified
       .filter((business) => business.discovery?.outreach_eligible !== false)
-      .slice(0, MAX_BRAND_VERIFICATION_CANDIDATES);
-    await verifyMultiLocationBrands(rankedForVerification, location);
-    const top20 = rankedForVerification
-      .filter((business) => business.discovery?.outreach_eligible !== false && business.discovery?.brand_check_status === "verified")
       .slice(0, MAX_AUDIT_CANDIDATES);
+    const top20 = rankedForVerification;
+    for (const business of top20) {
+      business.discovery = {
+        ...(business.discovery || {}),
+        analysis_candidate: true,
+        brand_check_status: "pending",
+        outreach_eligible: false,
+        exclusion_reason: "Independence verification is required before outreach is unlocked.",
+      };
+    }
     const qualifiedCount = qualified.length;
     const excludedMultiLocationCount = qualified.filter((business) => business.discovery?.outreach_eligible === false).length;
     const auditCandidates = top20;
@@ -1908,11 +1917,9 @@ async function runDiscoveryPipeline(
     await Promise.all(normalized.map((business) => dbSaveBusiness(business.place_id, business)));
     stageTimings.qualifying = Number(((Date.now() - stageStart) / 1000).toFixed(2));
 
-    // The independently verified shortlist is useful before the slower
-    // PageSpeed and grounded-answer work finishes. Publish it as an explicit
-    // intermediate state instead of holding the user on a progress screen.
-    // The detailed reports below continue on the same candidate objects and
-    // replace these preliminary records as evidence becomes available.
+    // Publish the candidate cohort immediately. Independence, website and
+    // competitor checks are selected-business evidence work; they must not
+    // make a person wait before seeing the local market result.
     const marketReadyAt = new Date().toISOString();
     await dbSaveRun(runId, {
       status: "market_ready",
@@ -1921,7 +1928,7 @@ async function runDiscoveryPipeline(
       stage_status: {
         discovering: "done",
         qualifying: "done",
-        auditing: "queued",
+        auditing: "deferred",
         testing: "queued",
         comparing: "queued",
         complete: "pending",
@@ -1929,8 +1936,9 @@ async function runDiscoveryPipeline(
       stage_counts: {
         discovering: candidatesCount,
         qualifying: qualifiedCount,
-        brand_checked: rankedForVerification.length,
-        outreach_eligible: top20.length,
+        brand_checked: 0,
+        analysis_candidates: top20.length,
+        outreach_eligible: 0,
         excluded_multi_location: excludedMultiLocationCount,
       },
       stage_timings: { ...stageTimings },
@@ -1942,8 +1950,9 @@ async function runDiscoveryPipeline(
         query_variants_completed: discoveryResponse.completedQueries,
         candidates_returned: candidatesCount,
         qualified_candidates: qualifiedCount,
-        brand_verified_candidates: rankedForVerification.length,
-        outreach_eligible_candidates: top20.length,
+        brand_verified_candidates: 0,
+        analysis_candidates: top20.length,
+        outreach_eligible_candidates: 0,
         excluded_multi_location_candidates: excludedMultiLocationCount,
         scope: location,
         market_coverage: "candidate_cohort_not_market_census",
@@ -1970,7 +1979,8 @@ async function runDiscoveryPipeline(
       stage_counts: {
         discovering: candidatesCount,
         qualifying: qualifiedCount,
-        outreach_eligible: top20.length,
+        analysis_candidates: top20.length,
+        outreach_eligible: 0,
         excluded_multi_location: excludedMultiLocationCount,
       },
       stage_timings: { ...stageTimings },
@@ -2303,7 +2313,7 @@ async function runDiscoveryPipeline(
     await Promise.all(top20.map((business) => dbSaveBusiness(business.place_id, business)));
 
     // ---------------------------------------------------------
-    // Phase 5: Comparing (Competitor Resolution & Competitive Gap)
+    // Phase 5: Comparing (deferred selected-business evidence)
     // ---------------------------------------------------------
     const compareStart = Date.now();
     const compareDoc = await dbGetRun(runId);
@@ -2315,42 +2325,17 @@ async function runDiscoveryPipeline(
       },
     });
 
-    // Build unmatched_names list, sort by appearance count, keep top 5
+    // Keep the grounded-answer names as evidence, but do not issue an extra
+    // Places lookup for every name during a market scan. Those lookups are
+    // useful only after somebody opens a specific business report.
     const unmatchedNamesList = Object.entries(unmatchedMap)
       .map(([name, count]) => ({ name, count }))
       .sort((a, b) => b.count - a.count);
 
-    const top5Unmatched = unmatchedNamesList.slice(0, 5);
+    const resolvedCompetitors: any[] = [];
 
-    // One Places Text Search each on "{name} {location}" for rating and review_count
-    const allCohortRatings = top20.map((b) => Number(b.rating || 0));
-    const allCohortVolumes = top20.map((b) => Math.log10(Number(b.review_count || 0) + 1));
-
-    const resolvedCompetitors = await Promise.all(
-      top5Unmatched.map(async (item) => {
-        const place = await fetchPlaceDetailsByName(item.name, location);
-        const rating = place ? place.rating : 0;
-        const review_count = place ? place.review_count : 0;
-        const resolvedName = place?.name || item.name;
-
-        const ratingPct = computeSinglePercentileRank(rating, allCohortRatings);
-        const volumePct = computeSinglePercentileRank(Math.log10(review_count + 1), allCohortVolumes);
-        const qualityScore = Math.round(0.6 * ratingPct + 0.4 * volumePct);
-
-        return {
-          name: resolvedName,
-          rating,
-          review_count,
-          appearances: item.count,
-          total_queries: Math.max(...top20.map((b) => Number(b.ai?.total || 0)), 0),
-          quality_score: qualityScore,
-          place_id: place?.place_id,
-        };
-      })
-    );
-
-    // Competitive gap: For each qualified business, pick the resolved competitor
-    // with the highest appearance count whose quality score is lower.
+    // A competitor comparison requires verified competitor place details. It
+    // is intentionally deferred rather than guessing from a model answer.
     for (const b of top20) {
       const lowerCompetitors = resolvedCompetitors.filter(
         (c) => c.quality_score < b.quality.score
@@ -2479,7 +2464,8 @@ async function runDiscoveryPipeline(
       stage_counts: {
         discovering: candidatesCount,
         qualifying: qualifiedCount,
-        outreach_eligible: top20.length,
+        analysis_candidates: top20.length,
+        outreach_eligible: 0,
         excluded_multi_location: excludedMultiLocationCount,
         auditing: auditedOpportunities,
         testing: top20.length,
@@ -2498,8 +2484,9 @@ async function runDiscoveryPipeline(
         query_variants_completed: discoveryResponse.completedQueries,
         candidates_returned: candidatesCount,
         qualified_candidates: qualifiedCount,
-        brand_verified_candidates: rankedForVerification.length,
-        outreach_eligible_candidates: top20.length,
+        brand_verified_candidates: 0,
+        analysis_candidates: top20.length,
+        outreach_eligible_candidates: 0,
         excluded_multi_location_candidates: excludedMultiLocationCount,
         scope: location,
         market_coverage: "candidate_cohort_not_market_census",
@@ -2663,6 +2650,10 @@ app.post("/api/outreach/:placeId", async (req: Request, res: Response) => {
 
   if (!hasCompleteAiVisibility(business)) {
     res.status(422).json({ error: "Outreach is unavailable until all ten AI visibility queries have completed." });
+    return;
+  }
+  if (business.discovery?.outreach_eligible !== true || business.discovery?.brand_check_status !== "verified") {
+    res.status(422).json({ error: "Outreach is unavailable until Goldmine verifies this is a single-location independent business." });
     return;
   }
 
