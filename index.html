@@ -88,16 +88,12 @@
       .controls input:focus,.controls select:focus{outline:3px solid rgba(15,107,112,.28);outline-offset:1px}
       .controls .btn{flex:0 0 auto;background:var(--ink);color:var(--paper);padding:14px 28px;font-size:15px}
       .scope-help{margin:14px 0 0;font-size:14px;color:var(--muted);font-weight:400}
-      .independent-statement{position:relative;isolation:isolate;overflow:hidden;display:grid;grid-template-columns:minmax(170px,.8fr) minmax(0,2fr);gap:28px;
-        margin:34px 0 4px;padding:30px 34px;border-radius:22px;background:linear-gradient(125deg,#0A5155 0%,#0F6B70 54%,#187D7C 100%);color:#fff}
-      .independent-statement::after{content:"";position:absolute;z-index:-1;width:270px;height:270px;right:-86px;top:-154px;border-radius:50%;
-        background:radial-gradient(circle,rgba(255,226,74,.95) 0 7%,rgba(255,226,74,.22) 8% 33%,transparent 34%)}
-      .statement-kicker{align-self:start;color:var(--yellow);font-size:11px;font-weight:700;letter-spacing:.16em;line-height:1.35;text-transform:uppercase}
-      .statement-copy{font-family:'Bricolage Grotesque',Outfit,sans-serif;font-size:clamp(22px,2.65vw,32px);font-weight:800;letter-spacing:-.035em;line-height:1.08;max-width:25ch}
+      .independent-statement{display:grid;grid-template-columns:minmax(170px,.8fr) minmax(0,2fr);gap:22px 28px;
+        margin:42px 0 10px;padding:30px 0;border-top:1px solid var(--hair);border-bottom:1px solid var(--hair)}
+      .statement-kicker{align-self:start;color:var(--teal);font-size:11px;font-weight:700;letter-spacing:.16em;line-height:1.35;text-transform:uppercase}
+      .statement-copy{font-family:'Bricolage Grotesque',Outfit,sans-serif;font-size:clamp(29px,3.45vw,43px);font-weight:800;letter-spacing:-.045em;line-height:1.02;max-width:21ch}
       .statement-copy mark{background:var(--yellow);color:var(--ink);padding:0 .13em;border-radius:4px}
-      .statement-detail{grid-column:2;max-width:59ch;color:rgba(255,255,255,.8);font-size:15px;line-height:1.55;font-weight:400}
-      .statement-tags{grid-column:2;display:flex;gap:8px;flex-wrap:wrap;margin-top:-12px}
-      .statement-tags span{border-radius:999px;background:rgba(255,255,255,.13);padding:7px 10px;color:#fff;font-size:12px;font-weight:600;letter-spacing:.03em}
+      .statement-detail{grid-column:2;max-width:59ch;color:var(--muted);font-size:16px;line-height:1.55;font-weight:400}
       .indexline{font-size:13.5px;color:var(--faint);margin-top:14px;font-weight:300}
 
       /* ---------- scan screen ---------- */
@@ -205,8 +201,8 @@
       @media (max-width:820px){
         .wrap{padding:36px 20px 64px}
         .split{grid-template-columns:1fr}
-        .independent-statement{grid-template-columns:1fr;gap:14px;padding:25px 23px}
-        .statement-detail,.statement-tags{grid-column:1}
+        .independent-statement{grid-template-columns:1fr;gap:14px;padding:25px 0}
+        .statement-detail{grid-column:1}
         .half.customers{border-right:0;border-bottom:2px solid var(--line)}
         .agent{grid-template-columns:1fr;gap:6px}
         .agent .stat{text-align:left}
@@ -231,7 +227,6 @@
           <p class="statement-kicker">Built for independent local businesses</p>
           <p class="statement-copy">The local favourites AI <mark>has not caught up with</mark> yet.</p>
           <p class="statement-detail">Goldmine finds businesses their communities already love, then screens out multi-location chains, franchises and national brands from prospect results. They may be market context; they are never presented as an outreach lead.</p>
-          <div class="statement-tags" aria-label="Goldmine principles"><span>Independent only</span><span>Evidence, not guesswork</span><span>Chains excluded from leads</span></div>
         </section>
 
         <!-- Dynamic Proof Card (Spotlight) -->
