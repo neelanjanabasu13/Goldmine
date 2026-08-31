@@ -88,14 +88,20 @@
       .controls input:focus,.controls select:focus{outline:3px solid rgba(15,107,112,.28);outline-offset:1px}
       .controls .btn{flex:0 0 auto;background:var(--ink);color:var(--paper);padding:14px 28px;font-size:15px}
       .scope-help{margin:14px 0 0;font-size:14px;color:var(--muted);font-weight:400}
-      #viewLanding{text-align:center}
+      #viewLanding{text-align:center;flex-direction:column}
       #viewLanding h1{margin-inline:auto}
       #viewLanding .sub{margin-inline:auto}
+      #viewLanding>h1{order:1}
+      #viewLanding>.sub{order:2}
+      #viewLanding>.scan-entry{order:3}
+      #viewLanding>.independent-statement{order:4}
+      #viewLanding>#proofCardContainer{order:5}
+      #viewLanding>.market-story{order:6}
+      #viewLanding>#indexStatsLine{order:7}
       #viewLanding .controls{max-width:820px;margin-inline:auto;justify-content:center}
       #viewLanding .scope-help{text-align:center}
       #viewLanding .indexline{text-align:center}
-      .hero-action{margin-top:30px;background:var(--teal);color:#fff;padding:15px 25px}
-      .hero-action:hover{box-shadow:3px 3px 0 var(--yellow)}
+      .hero-action{display:none}
       .independent-statement{max-width:790px;margin:42px auto 10px;padding:30px 0;border-top:1px solid var(--hair);border-bottom:1px solid var(--hair);text-align:center}
       .statement-kicker{color:var(--teal);font-size:11px;font-weight:700;letter-spacing:.16em;line-height:1.35;text-transform:uppercase}
       .statement-copy{font-family:'Bricolage Grotesque',Outfit,sans-serif;font-size:clamp(29px,3.45vw,43px);font-weight:800;letter-spacing:-.045em;line-height:1.02;max-width:21ch}
@@ -121,7 +127,7 @@
       .story-step-number{color:var(--teal);font-size:11px;font-weight:700;letter-spacing:.16em}
       .story-step h2{margin-top:10px;font-size:clamp(28px,3.2vw,42px);max-width:11ch}
       .story-step p{margin-top:14px;max-width:31ch;color:var(--muted);font-size:16px;line-height:1.55}
-      .scan-entry{max-width:860px;margin:104px auto 0;padding-top:50px;border-top:1px solid var(--hair)}
+      .scan-entry{max-width:860px;margin:42px auto 0;padding-top:34px;border-top:1px solid var(--hair)}
       .scan-entry h2{font-size:clamp(31px,4.1vw,50px);max-width:13ch;margin:12px auto 0}
       .scan-entry .controls{margin-top:30px}
       .indexline{font-size:13.5px;color:var(--faint);margin-top:14px;font-weight:300}
@@ -252,8 +258,8 @@
            --------------------------------------------------------- -->
       <div id="viewLanding">
         <h1>Find the businesses your agency is <mark>missing</mark>.</h1>
-        <p class="sub">
-          Goldmine finds independent local businesses their communities already love, but AI does not yet recommend.
+          <p class="sub">
+          Find London businesses their communities already love, but AI does not yet recommend — then turn the evidence into a considered outreach email.
         </p>
         <button id="btnExploreMarket" class="btn hero-action">EXPLORE THE LOCAL MARKET ↓</button>
 
@@ -294,8 +300,8 @@
         </section>
 
         <section class="scan-entry" id="scanEntry" aria-label="Start a Goldmine scan">
-          <span class="statement-kicker">Start a market scan</span>
-          <h2>Choose a local area. Goldmine does the rest.</h2>
+          <span class="statement-kicker">Free local market scan</span>
+          <h2>Choose an area. Find the businesses AI is overlooking.</h2>
           <div class="controls">
           <select id="inputLocation" aria-label="Area in London">
             <option value="" selected disabled>Select an area in London</option>
@@ -334,7 +340,7 @@
           </select>
           <button id="btnFindGold" class="btn btn-primary">FIND GOLD</button>
           </div>
-          <p class="scope-help">London only. Select a supported local area — no borough knowledge or free-text spelling required.</p>
+          <p class="scope-help">Free: one area and category search, plus one verified prospect email. One later unlock covers every remaining verified email draft from this scan. London only — select an area, no borough knowledge or free-text spelling required.</p>
         </section>
 
         <div id="indexStatsLine" class="indexline">
@@ -622,7 +628,7 @@
       // Navigation
       // -----------------------------------------------------------
       function showView(viewId) {
-        document.getElementById("viewLanding").style.display = viewId === "landing" ? "block" : "none";
+        document.getElementById("viewLanding").style.display = viewId === "landing" ? "flex" : "none";
         document.getElementById("viewScan").style.display = viewId === "scan" ? "block" : "none";
         document.getElementById("viewResults").style.display = viewId === "results" ? "block" : "none";
         document.getElementById("viewDetail").style.display = viewId === "detail" ? "block" : "none";
@@ -1026,7 +1032,7 @@
             <td style="text-align: right;">${b.rating || 0}★ <span style="color: var(--faint); font-size: 13px;">(${b.review_count || 0})</span></td>
             <td style="text-align: right; color: var(--pos); font-weight: 600;">${b.quality?.score || 0}</td>
             <td style="text-align: right; color: ${scoredEvidence && b.ai?.visibility < 40 ? 'var(--neg)' : 'var(--faint)'}; font-weight: 600;">${visibilityLabel}</td>
-            <td class="goldcell">${scoredEvidence ? `${b.gold_score}${completeEvidence ? '' : '<small style="display:block; font-size:10px; color:var(--faint);">PROVISIONAL</small>'}` : '—'}</td>
+            <td class="goldcell">${scoredEvidence ? `${b.gold_score}${completeEvidence ? '' : `<small style="display:block; font-size:10px; color:var(--faint);">${b.score_status === 'indicative' ? 'EARLY SIGNAL' : 'PROVISIONAL'}</small>`}` : '—'}</td>
           `;
 
           if (scoredEvidence) {
@@ -1092,7 +1098,7 @@
         const goldScore = scoredEvidence ? Math.round(Number(b.gold_score || 0)) : null;
         if (scoredEvidence) animateCountUp(document.getElementById("detailGoldScore"), goldScore, 600);
         else document.getElementById("detailGoldScore").textContent = "—";
-        document.getElementById("detailGoldLabel").textContent = fullEvidence ? "GOLD" : scoredEvidence ? "PROVISIONAL" : "PENDING";
+        document.getElementById("detailGoldLabel").textContent = fullEvidence ? "GOLD" : scoredEvidence ? (b.score_status === "indicative" ? "EARLY SIGNAL" : "PROVISIONAL") : "PENDING";
         animateCountUp(document.getElementById("detailRating"), b.rating || 0, 600, "", "", 1);
         document.getElementById("detailReviewCount").textContent = `from ${(b.review_count || 0).toLocaleString()} customer reviews`;
         if (aiMeasured) animateCountUp(document.getElementById("detailAiVis"), visibility, 600, "", "%");
@@ -1429,7 +1435,7 @@
       }
 
       function hasScoredAiVisibility(business) {
-        return business?.score_status === "measured" || business?.score_status === "provisional";
+        return business?.score_status === "measured" || business?.score_status === "provisional" || business?.score_status === "indicative";
       }
 
       // Initialize on load

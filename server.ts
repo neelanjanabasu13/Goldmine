@@ -1911,6 +1911,10 @@ async function runDiscoveryPipeline(
       .filter((business) => business.discovery?.outreach_eligible !== false)
       .slice(0, MAX_AUDIT_CANDIDATES);
     const top20 = rankedForVerification;
+    // Count only the deterministic pre-screen exclusions. The following
+    // pending state is not an exclusion: it is a deliberate safety lock until
+    // selected-business verification has run.
+    const excludedMultiLocationCount = qualified.filter((business) => business.discovery?.outreach_eligible === false).length;
     for (const business of top20) {
       business.discovery = {
         ...(business.discovery || {}),
@@ -1921,7 +1925,6 @@ async function runDiscoveryPipeline(
       };
     }
     const qualifiedCount = qualified.length;
-    const excludedMultiLocationCount = qualified.filter((business) => business.discovery?.outreach_eligible === false).length;
     const auditCandidates = top20;
 
     // The complete, selected cohort is stored in the run document below.
@@ -2414,11 +2417,13 @@ async function runDiscoveryPipeline(
         : null;
       const aiComplete = hasCompleteAiVisibility(b);
       const testedCount = Number(b.ai?.total || 0);
-      // Six successful, individually recorded queries are enough to show a
-      // clearly-labelled provisional opportunity score. Full evidence remains
-      // required for final Gold status and any outreach action.
+      // Never turn completed evidence into a blank field. One to five tests
+      // is an explicitly labelled early signal; six to nine is provisional;
+      // all ten is measured. Outreach remains locked until all ten complete
+      // and the business is independently verified.
+      const hasAnyEvidence = testedCount >= 1;
       const hasProvisionalEvidence = testedCount >= 6;
-      const visibilityScore = hasProvisionalEvidence
+      const visibilityScore = hasAnyEvidence
         ? (siteHealth === null ? b.ai.visibility : Math.round(0.7 * b.ai.visibility + 0.3 * siteHealth))
         : null;
       const goldScore = visibilityScore === null
@@ -2428,7 +2433,7 @@ async function runDiscoveryPipeline(
       b.site_health = siteHealth;
       b.visibility_score = visibilityScore;
       b.gold_score = goldScore;
-      b.score_status = aiComplete ? "measured" : (hasProvisionalEvidence ? "provisional" : "unmeasured");
+      b.score_status = aiComplete ? "measured" : (hasProvisionalEvidence ? "provisional" : (hasAnyEvidence ? "indicative" : "unmeasured"));
 
       // Deterministic service mapping
       const { service } = determineServiceRecommendation(b, services);
@@ -2444,8 +2449,8 @@ async function runDiscoveryPipeline(
 
     // Sort descending by gold_score
     top20.sort((a, b) => {
-      const aMeasured = a.score_status === "measured" || a.score_status === "provisional";
-      const bMeasured = b.score_status === "measured" || b.score_status === "provisional";
+      const aMeasured = a.score_status === "measured" || a.score_status === "provisional" || a.score_status === "indicative";
+      const bMeasured = b.score_status === "measured" || b.score_status === "provisional" || b.score_status === "indicative";
       if (aMeasured !== bMeasured) return aMeasured ? -1 : 1;
       if (aMeasured && b.gold_score !== a.gold_score) {
         return Number(b.gold_score) - Number(a.gold_score);
