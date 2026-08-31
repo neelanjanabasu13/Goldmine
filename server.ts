@@ -306,10 +306,22 @@ async function useFirestore<T>(work: () => Promise<T>): Promise<T | null> {
   }
 }
 
-async function dbSaveRun(runId: string, data: Record<string, any>) {
+async function dbSaveRun(runId: string, data: Record<string, any>, waitForPersistence = false) {
   store.runs[runId] = { ...(store.runs[runId] || {}), ...data };
-  const persisted = await useFirestore(() => firestore!.collection("runs").doc(runId).set(data, { merge: true }));
-  if (persisted === null) saveLocalStore();
+  const persist = async () => {
+    const persisted = await useFirestore(() => firestore!.collection("runs").doc(runId).set(data, { merge: true }));
+    if (persisted === null) saveLocalStore();
+  };
+
+  // Progress updates are already immediately visible from the in-memory run
+  // state. Waiting for Firestore after every agent transition was adding about
+  // twenty seconds to an otherwise completed interactive scan. Final/error
+  // records and initial creation opt into a durable wait explicitly.
+  if (waitForPersistence) {
+    await persist();
+  } else {
+    void persist();
+  }
 }
 
 async function dbGetRun(runId: string) {
@@ -2490,7 +2502,7 @@ async function runDiscoveryPipeline(
       },
       results: top20,
       finished_at: new Date().toISOString(),
-    });
+    }, true);
   } catch (err: any) {
     console.error(`Error in discovery pipeline run ${runId}:`, err);
     await dbSaveRun(runId, {
@@ -2500,7 +2512,7 @@ async function runDiscoveryPipeline(
       stage_timings: { ...stageTimings },
       stage_durations_sec: { ...stageTimings },
       finished_at: new Date().toISOString(),
-    });
+    }, true);
   }
 }
 
@@ -2569,7 +2581,7 @@ const handleRunCreation = async (req: Request, res: Response) => {
     results: [],
   };
 
-  await dbSaveRun(runId, runDoc);
+  await dbSaveRun(runId, runDoc, true);
 
   // Background execution
   setImmediate(() => {
