@@ -2803,26 +2803,33 @@ app.get("/api/index/stats", async (req: Request, res: Response) => {
 });
 
 app.get("/api/spotlight", async (req: Request, res: Response) => {
-  // Sync all businesses from all run results into businesses collection
+  // A landing-page example must be read-only. Persisting every past result on
+  // page load was both slow and capable of resurrecting an old, misleading
+  // record. Select directly from completed run evidence instead.
+  const bestByPlace = new Map<string, any>();
   for (const run of await dbListRuns()) {
     if (Array.isArray(run.results)) {
       for (const b of run.results) {
         if (b.place_id) {
-          const existing = await dbGetBusiness(b.place_id);
-          if (!existing || (b.gold_score || 0) > (existing.gold_score || 0)) {
-            await dbSaveBusiness(b.place_id, b);
+          const existing = bestByPlace.get(b.place_id);
+          if (!existing || Number(b.gold_score || 0) > Number(existing.gold_score || 0)) {
+            bestByPlace.set(b.place_id, b);
           }
         }
       }
     }
   }
 
-  const allBusinesses = await dbListBusinesses();
+  const allBusinesses = [...bestByPlace.values()];
   // A spotlight is public proof. Partial query responses must never be picked
   // merely because they happened to produce a numeric score in an older run.
-  const measuredBusinesses = allBusinesses.filter(hasCompleteAiVisibility);
+  const measuredBusinesses = allBusinesses.filter((business) =>
+    hasCompleteAiVisibility(business)
+    && Number(business?.quality?.score || 0) >= 60
+    && Number(business?.ai?.visibility || 100) <= 35
+  );
   if (measuredBusinesses.length === 0) {
-    res.status(404).json({ error: "No business has a completed AI visibility measurement yet" });
+    res.status(404).json({ error: "No completed high-reputation, low-AI-visibility example is available yet" });
     return;
   }
 

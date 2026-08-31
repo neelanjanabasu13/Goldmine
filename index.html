@@ -54,16 +54,24 @@
       .coin strong{position:relative;font-family:'Bricolage Grotesque',sans-serif;font-size:36px;font-weight:800;
         color:#5A3E0C;font-variant-numeric:tabular-nums;text-shadow:0 1px 0 rgba(255,255,255,.6)}
       .coin em{position:absolute;bottom:14px;font-style:normal;font-size:7.5px;font-weight:600;letter-spacing:.2em;color:#7A5714}
+      .coin.neutral{background:linear-gradient(135deg,#F4F0E7,#C9C1B5 48%,#EEE9DE);box-shadow:0 3px 0 #877F73,0 10px 20px rgba(52,47,39,.18),inset 0 2px 3px rgba(255,255,255,.75),inset 0 -3px 6px rgba(73,67,58,.22)}
+      .coin.neutral::before{border-color:rgba(73,67,58,.3)}
+      .coin.neutral strong{color:#4B453D;text-shadow:0 1px 0 rgba(255,255,255,.65)}
+      .coin.neutral em{color:#625B52}
 
       /* ---------- the two halves ---------- */
       .split{display:grid;grid-template-columns:1fr 1fr}
       .half{padding:32px 30px}
       .half.customers{background:var(--pos-bg);border-right:2px solid var(--line)}
       .half.ai{background:var(--neg-bg)}
+      .half.ai.medium{background:#FFF6D8}
+      .half.ai.strong{background:var(--pos-bg)}
       .big{font-family:'Bricolage Grotesque',sans-serif;font-size:70px;font-weight:800;line-height:.98;
         letter-spacing:-.04em;margin-top:12px;font-variant-numeric:tabular-nums}
       .half.customers .big{color:var(--pos)}
       .half.ai .big{color:var(--neg)}
+      .half.ai.medium .big{color:#9B6700}
+      .half.ai.strong .big{color:var(--pos)}
       .big .star{font-size:29px;vertical-align:.3em;margin-left:5px;color:var(--star)}
       .note{font-size:13.5px;color:var(--muted);margin-top:10px;line-height:1.5;font-weight:300}
 
@@ -458,7 +466,7 @@
               <div class="biz-name" id="detailBizName">Business Name</div>
               <div class="biz-addr" id="detailBizAddr">Category · Locality</div>
             </div>
-            <div class="coin"><strong id="detailGoldScore">0</strong><em id="detailGoldLabel">GOLD</em></div>
+            <div class="coin" id="detailCoin"><strong id="detailGoldScore">0</strong><em id="detailGoldLabel">GOLD</em></div>
           </div>
           <div class="split">
             <div class="half customers">
@@ -466,8 +474,8 @@
               <div class="big"><span id="detailRating">0.0</span><span class="star">★</span></div>
               <div class="note" id="detailReviewCount">from 0 customer reviews</div>
             </div>
-            <div class="half ai">
-              <div class="lab">WHAT AI THINKS</div>
+            <div class="half ai" id="detailAiHalf">
+              <div class="lab">AI DISCOVERABILITY</div>
               <div class="big" id="detailAiVis">0%</div>
               <div class="note" id="detailAiVisNote">named in 0 of 0 searches</div>
             </div>
@@ -705,8 +713,12 @@
           summarySentence = `A ${escapeHtml(catSingular)} with ${reviewsFormatted} reviews at ${rating} stars. Goldmine completed ${aiTotal} of 10 AI visibility queries, so no Gold score is shown.`;
         } else if (aiVis === 0 || aiMentions === 0) {
           summarySentence = `A ${escapeHtml(catSingular)} with ${reviewsFormatted} reviews at ${rating} stars that Gemini has never once recommended.`;
-        } else {
+        } else if (aiVis <= 35) {
           summarySentence = `A ${escapeHtml(catSingular)} with ${reviewsFormatted} reviews at ${rating} stars that Gemini recommends in only ${aiMentions} of ${aiTotal} searches.`;
+        } else {
+          // This should not normally render: the server only supplies a
+          // spotlight when a business has a genuine visibility gap.
+          summarySentence = `A ${escapeHtml(catSingular)} with ${reviewsFormatted} reviews at ${rating} stars that AI already recommends often.`;
         }
 
         container.innerHTML = `
@@ -716,7 +728,7 @@
                 <div class="biz-name">${escapeHtml(biz.name)}</div>
                 <div class="biz-addr">${escapeHtml(category)} · ${escapeHtml(address)}</div>
               </div>
-              <div class="coin"><strong id="proofGoldVal">${goldScore ?? "—"}</strong><em>${aiComplete ? "GOLD" : "PENDING"}</em></div>
+              <div class="coin ${aiComplete && aiVis > 35 ? "neutral" : ""}"><strong id="proofGoldVal">${goldScore ?? "—"}</strong><em>${aiComplete && aiVis <= 35 ? "GOLD" : "NOT A LEAD"}</em></div>
             </div>
             <div class="split">
               <div class="half customers">
@@ -724,8 +736,8 @@
                 <div class="big"><span id="proofRating">${rating}</span><span class="star">★</span></div>
                 <div class="note">from ${reviewsFormatted} customer reviews</div>
               </div>
-              <div class="half ai">
-                <div class="lab">WHAT AI THINKS</div>
+              <div class="half ai ${aiComplete ? (aiVis <= 35 ? "" : aiVis < 70 ? "medium" : "strong") : ""}">
+                <div class="lab">AI DISCOVERABILITY</div>
                 <div class="big" id="proofAiVis">${aiComplete ? `${aiVis}%` : "—"}</div>
                 <div class="note">${aiComplete ? `named in ${aiMentions} of ${aiTotal} searches customers actually make` : aiMeasured ? `${aiTotal} of 10 queries completed — Gold score withheld` : "AI visibility could not be measured"}</div>
               </div>
@@ -1076,6 +1088,11 @@
         const scoredEvidence = hasScoredAiVisibility(b);
         const fullEvidence = hasCompleteAiVisibility(b);
         const visibility = aiMeasured ? Math.round((100 * mentions) / totalTested) : null;
+        const isAiOpportunity = aiMeasured && visibility < 40;
+        const aiHalf = document.getElementById("detailAiHalf");
+        const detailCoin = document.getElementById("detailCoin");
+        if (aiHalf) aiHalf.className = `half ai${!aiMeasured ? "" : visibility >= 70 ? " strong" : visibility >= 40 ? " medium" : ""}`;
+        if (detailCoin) detailCoin.classList.toggle("neutral", !isAiOpportunity);
 
         document.getElementById("detailBizName").textContent = b.name || "Business";
         document.getElementById("detailBizAddr").textContent = `${b.category || category} · ${b.address || locality}`;
@@ -1088,6 +1105,10 @@
           verdictText += "AI visibility not measured for this business.";
         } else if (visibility === 0) {
           verdictText += "Customers already rate them highly, yet they were not named in the completed AI searches. That mismatch is why this is a Goldmine opportunity.";
+        } else if (visibility >= 70) {
+          verdictText += `They were visible in ${visibility}% of the completed AI customer searches. AI is already finding this business reliably, so this is not a Goldmine AI-discoverability prospect.`;
+        } else if (visibility >= 40) {
+          verdictText += `They were visible in ${visibility}% of the completed AI customer searches. Their AI discoverability is established; this is a weaker opportunity than businesses AI rarely names.`;
         } else {
           verdictText += `They were visible in ${visibility}% of the completed AI customer searches. ${scoredEvidence ? "Strong customer proof paired with weaker AI visibility is the Goldmine: a credible business with room to be found." : "More AI evidence is needed before Goldmine can score the opportunity."}`;
         }
@@ -1110,7 +1131,7 @@
           document.getElementById("detailAiVisNote").textContent = `named in ${mentions} of ${totalTested} completed searches${fullEvidence ? "" : " · provisional evidence"}`;
         }
 
-        document.getElementById("detailRecService").textContent = b.recommended_service || "SEO, websites and AI visibility";
+        document.getElementById("detailRecService").textContent = !aiMeasured ? (b.recommended_service || "Evidence still loading") : visibility >= 70 ? "No AI visibility opportunity identified" : (b.recommended_service || "SEO, websites and AI visibility");
 
         // 1. TOP CUSTOMER REVIEW
         const topRevSection = document.getElementById("topReviewSection");
