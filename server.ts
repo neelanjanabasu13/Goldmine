@@ -1328,7 +1328,9 @@ async function verifyMultiLocationBrands(businesses: any[], location: string) {
   // parent city so a single branch returned by the initial scoped search is not
   // mistaken for an independent prospect.
   await runWithConcurrency(businesses, 8, async (business) => {
-    if (business.discovery?.outreach_eligible === false) return;
+    // A fast market scan deliberately marks candidates as pending. That is a
+    // safety lock, not a reason to skip the selected-business verification.
+    if (business.discovery?.brand_check_status === "verified" || business.discovery?.brand_check_status === "unverified") return;
     const term = brandSearchTerm(business.name || "");
     if (!term) {
       business.discovery = {
@@ -1382,6 +1384,9 @@ async function verifyMultiLocationBrands(businesses: any[], location: string) {
         business.discovery.outreach_eligible = false;
         business.discovery.brand_group_size = Math.max(Number(business.discovery.brand_group_size || 1), locationCount);
         business.discovery.exclusion_reason = `Google Places found ${locationCount} locations for this brand in ${parentMarket}.`;
+      } else {
+        business.discovery.outreach_eligible = true;
+        business.discovery.exclusion_reason = null;
       }
     } catch (error) {
       console.warn(`Brand verification failed for ${business.name}:`, error);
@@ -2665,6 +2670,12 @@ app.post("/api/outreach/:placeId", async (req: Request, res: Response) => {
   if (!hasCompleteAiVisibility(business)) {
     res.status(422).json({ error: "Outreach is unavailable until all ten AI visibility queries have completed." });
     return;
+  }
+  // The scan intentionally defers this external check so it remains fast.
+  // Run it only after the user requests an actual prospect email.
+  if (business.discovery?.brand_check_status === "pending" || business.discovery?.brand_check_status === undefined) {
+    await verifyMultiLocationBrands([business], business.discovery?.scope || "London, UK");
+    await dbSaveBusiness(business.place_id, business);
   }
   if (business.discovery?.outreach_eligible !== true || business.discovery?.brand_check_status !== "verified") {
     res.status(422).json({ error: "Outreach is unavailable until Goldmine verifies this is a single-location independent business." });

@@ -1383,7 +1383,10 @@
             body: JSON.stringify({ services: currentBusiness.recommended_service }),
           });
 
-          if (!resp.ok) throw new Error("Outreach endpoint error");
+          if (!resp.ok) {
+            const failure = await resp.json().catch(() => ({}));
+            throw new Error(failure.error || "Outreach endpoint error");
+          }
           const data = await resp.json();
 
           const panel = document.getElementById("outreachPanel");
@@ -1426,7 +1429,7 @@
           };
         } catch (err) {
           console.error("Outreach generation failed:", err);
-          alert("Failed to draft outreach email. Please try again.");
+          alert(err?.message || "Failed to draft outreach email. Please try again.");
           btn.textContent = "SEND THIS PROSPECT AN EMAIL";
         } finally {
           btn.disabled = false;
