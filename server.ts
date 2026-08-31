@@ -25,7 +25,7 @@ const MAX_AUDIT_CANDIDATES = 10;
 // prospect set. This is deliberately bounded: Places has no first-party
 // "independent business" flag, so each candidate still needs a real check.
 const MAX_BRAND_VERIFICATION_CANDIDATES = 25;
-const GROUNDING_QUERY_CONCURRENCY = Math.max(1, Number(process.env.GROUNDING_QUERY_CONCURRENCY || 8));
+const GROUNDING_QUERY_CONCURRENCY = Math.max(1, Math.min(10, Number(process.env.GROUNDING_QUERY_CONCURRENCY || 10)));
 const GROUNDING_QUERY_TIMEOUT_MS = Math.max(1_000, Number(process.env.GROUNDING_QUERY_TIMEOUT_MS || 18_000));
 const VISIBILITY_STAGE_TIMEOUT_MS = Math.max(1_000, Number(process.env.VISIBILITY_STAGE_TIMEOUT_MS || 55_000));
 const PLACES_REQUEST_TIMEOUT_MS = Math.max(1_000, Number(process.env.PLACES_REQUEST_TIMEOUT_MS || 8_000));
@@ -1912,9 +1912,11 @@ async function runDiscoveryPipeline(
     const excludedMultiLocationCount = qualified.filter((business) => business.discovery?.outreach_eligible === false).length;
     const auditCandidates = top20;
 
-    // Persist candidate records concurrently. Serial writes would turn the
-    // durable store itself into the scan bottleneck.
-    await Promise.all(normalized.map((business) => dbSaveBusiness(business.place_id, business)));
+    // The complete, selected cohort is stored in the run document below.
+    // Writing every raw discovery record to a second Firestore collection
+    // makes an interactive scan wait on dozens of non-user-visible writes.
+    // A business document is created only when a user requests deep analysis
+    // or an outreach draft for that specific business.
     stageTimings.qualifying = Number(((Date.now() - stageStart) / 1000).toFixed(2));
 
     // Publish the candidate cohort immediately. Independence, website and
@@ -2238,10 +2240,11 @@ async function runDiscoveryPipeline(
             // destroys all ten measurements at once. Running bounded parallel
             // single-query calls preserves every successful result and keeps
             // the exact ten-question methodology intact.
-            // Five calls at a time keeps the full ten-query method within two
-            // bounded rounds (rather than three rounds of four) without
-            // turning the request into an unbounded quota burst.
-            await runWithConcurrency(uncached, Math.min(5, GROUNDING_QUERY_CONCURRENCY), async ({ query, qIdx }) => {
+            // All ten are independent and share exactly one local market.
+            // Starting them together turns the visibility stage into one
+            // bounded response window rather than two serial rounds. Each
+            // still has its own deadline and failure record.
+            await runWithConcurrency(uncached, Math.min(10, GROUNDING_QUERY_CONCURRENCY), async ({ query, qIdx }) => {
               const searchPrompt = `Act as an AI local recommendation assistant in ${loc}. Use Google Search grounding to answer this one customer query. Return JSON only in this exact shape: {"results":[{"query":"${query.replace(/"/g, '\\"')}","answer_text":"the recommendation response","businesses":[{"name":"business name","rank":1}]}]}. Preserve the exact query and list up to five recommended businesses in rank order.\n\nCustomer query: ${query}`;
               try {
                 const response = await withTimeout(
@@ -2308,9 +2311,6 @@ async function runDiscoveryPipeline(
 
     // Wait for both concurrent stages to complete
     await Promise.all([auditPromise, testingPromise]);
-
-    // Save all businesses with updated site & AI information.
-    await Promise.all(top20.map((business) => dbSaveBusiness(business.place_id, business)));
 
     // ---------------------------------------------------------
     // Phase 5: Comparing (deferred selected-business evidence)
@@ -2443,9 +2443,6 @@ async function runDiscoveryPipeline(
       }
       return Number(a.visibility_score || 0) - Number(b.visibility_score || 0);
     });
-
-    // Persist all businesses.
-    await Promise.all(top20.map((business) => dbSaveBusiness(business.place_id, business)));
 
     stageTimings.complete = Number(((Date.now() - completeStart) / 1000).toFixed(2));
     const totalDurationSec = Number(((Date.now() - pipelineStart) / 1000).toFixed(2));
