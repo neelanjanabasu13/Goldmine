@@ -419,6 +419,7 @@
           Goldmine assessed candidates
         </h1>
         <p id="resultsScope" style="margin: -12px 0 24px; color: var(--muted); font-size: 14px;"></p>
+        <p id="resultsLiveNotice" style="display: none; margin: -8px 0 24px; font-size: 16px; font-weight: 700;"></p>
 
         <div class="results">
           <table>
@@ -553,6 +554,7 @@
       let currentRunDoc = null;
       let currentBusiness = null;
       let pollInterval = null;
+      let marketResultsShown = false;
       let startTime = 0;
       let estimatedTotalSec = 45;
 
@@ -772,6 +774,7 @@
         } catch {}
 
         // Reset Scan UI
+        marketResultsShown = false;
         resetScanUi();
         showView("scan");
         startTime = Date.now();
@@ -833,13 +836,22 @@
               return;
             }
 
+            // Discovery and independent-business qualification are the useful
+            // first answer. Show them as soon as they are honest to show while
+            // slower website and grounded-AI evidence continues in background.
+            if (!marketResultsShown && doc.market_ready_at && Array.isArray(doc.results) && doc.results.length > 0) {
+              marketResultsShown = true;
+              renderResultsView(doc);
+              showView("results");
+            }
+
             // AUTO ROUTE TO RESULTS ON COMPLETION
             if (doc.status === "complete") {
               clearInterval(pollInterval);
               pollInterval = null;
               setTimeout(() => {
                 renderResultsView(doc);
-                showView("results");
+                if (document.getElementById("viewDetail").style.display !== "block") showView("results");
               }, 400);
             }
           } catch (err) {
@@ -970,8 +982,9 @@
           return Number(b.gold_score || 0) - Number(a.gold_score || 0);
         });
 
+        const analysisInProgress = runDoc.status !== "complete";
         document.getElementById("resultsHeadline").textContent =
-          `Goldmine found ${results.length} eligible prospects in ${category}, ${location}`;
+          `Goldmine found ${results.length} independently verified prospects in ${category}, ${location}`;
 
         const discovery = runDoc.discovery || {};
         const returned = Number(discovery.candidates_returned || runDoc.stage_counts?.discovering || results.length);
@@ -979,7 +992,12 @@
         const excludedMultiLocation = Number(discovery.excluded_multi_location_candidates || runDoc.stage_counts?.excluded_multi_location || 0);
         const brandVerified = Number(discovery.brand_verified_candidates || 0);
         document.getElementById("resultsScope").textContent =
-          `${source} returned ${returned} candidates in the requested area. Goldmine brand-verified the ${brandVerified} candidates eligible for full analysis; ${excludedMultiLocation} multi-location brand record${excludedMultiLocation === 1 ? " was" : "s were"} excluded from prospect scoring and outreach. This product is designed for independent local businesses; chains may be discovered as market context but are never shown as leads. This is a candidate cohort, not a complete market census or a Google search/ad ranking.`;
+          `${source} returned ${returned} candidates in the requested area. Goldmine checked the ${brandVerified} highest-reputation candidates and excluded ${excludedMultiLocation} multi-location brand record${excludedMultiLocation === 1 ? "" : "s"} from prospect scoring and outreach. This is a candidate cohort, not a complete market census or a Google search/ad ranking.`;
+        const liveNotice = document.getElementById("resultsLiveNotice");
+        liveNotice.style.display = analysisInProgress ? "block" : "none";
+        liveNotice.textContent = analysisInProgress
+          ? "Your independent-business shortlist is ready. Gold scores and evidence are still being built in the background."
+          : "Every listed business has a completed evidence pack: ten grounded customer queries, website findings and an outreach draft.";
 
         const tbody = document.getElementById("resultsTableBody");
         tbody.innerHTML = "";
@@ -998,11 +1016,16 @@
             <td class="goldcell">${hasMeasuredAiVisibility(b) ? b.gold_score : '—'}</td>
           `;
 
-          tr.addEventListener("click", () => {
-            currentBusiness = b;
-            renderDetailView(b, runDoc);
-            showView("detail");
-          });
+          if (hasMeasuredAiVisibility(b)) {
+            tr.addEventListener("click", () => {
+              currentBusiness = b;
+              renderDetailView(b, runDoc);
+              showView("detail");
+            });
+          } else {
+            tr.title = "Evidence report is still being built.";
+            tr.style.cursor = "wait";
+          }
 
           tbody.appendChild(tr);
         });

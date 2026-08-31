@@ -1790,6 +1790,47 @@ async function runDiscoveryPipeline(
     await Promise.all(normalized.map((business) => dbSaveBusiness(business.place_id, business)));
     stageTimings.qualifying = Number(((Date.now() - stageStart) / 1000).toFixed(2));
 
+    // The independently verified shortlist is useful before the slower
+    // PageSpeed and grounded-answer work finishes. Publish it as an explicit
+    // intermediate state instead of holding the user on a progress screen.
+    // The detailed reports below continue on the same candidate objects and
+    // replace these preliminary records as evidence becomes available.
+    const marketReadyAt = new Date().toISOString();
+    await dbSaveRun(runId, {
+      status: "market_ready",
+      stage: "market_ready",
+      market_ready_at: marketReadyAt,
+      stage_status: {
+        discovering: "done",
+        qualifying: "done",
+        auditing: "queued",
+        testing: "queued",
+        comparing: "queued",
+        complete: "pending",
+      },
+      stage_counts: {
+        discovering: candidatesCount,
+        qualifying: qualifiedCount,
+        brand_checked: rankedForVerification.length,
+        outreach_eligible: top20.length,
+        excluded_multi_location: excludedMultiLocationCount,
+      },
+      stage_timings: { ...stageTimings },
+      stage_durations_sec: { ...stageTimings },
+      discovery: {
+        source: "Google Places Text Search",
+        query: discoveryQuery,
+        candidates_returned: candidatesCount,
+        qualified_candidates: qualifiedCount,
+        brand_verified_candidates: rankedForVerification.length,
+        outreach_eligible_candidates: top20.length,
+        excluded_multi_location_candidates: excludedMultiLocationCount,
+        scope: location,
+        market_coverage: "candidate_cohort_not_market_census",
+      },
+      results: top20,
+    });
+
     // ---------------------------------------------------------
     // Phase 3 & 4: Auditing & AI Testing (Concurrent execution)
     // ---------------------------------------------------------
