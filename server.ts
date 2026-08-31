@@ -863,8 +863,22 @@ function computeOpportunityValueEstimate(
   const rawGap = 1 - (own_appearances / total_queries);
   const visibility_gap = Number(Math.max(0, rawGap).toFixed(4));
   const missed_discoveries = Math.round(monthly_searches * visibility_gap);
-  const monthly_value = Math.round(missed_discoveries * conversion_rate * avg_customer_value);
-  const annual_value = Math.round(monthly_value * 12);
+  const benchmarkAnnualValue = Math.round(missed_discoveries * conversion_rate * avg_customer_value * 12);
+
+  // The V0 range is intentionally directional. It applies public proof that is
+  // specific to this business while reserving price and demand enrichment for
+  // the paid report.
+  const reputationScore = Math.max(0, Math.min(100, Number(b.quality?.score || 50)));
+  const reviewCount = Math.max(0, Number(b.review_count || 0));
+  const qualityMultiplier = 0.75 + (0.5 * reputationScore / 100);
+  const reviewEvidence = Math.min(1, Math.log10(reviewCount + 1) / 3);
+  const reviewMultiplier = 0.85 + (0.15 * reviewEvidence);
+  const directionalAnnualValue = Math.round(benchmarkAnnualValue * qualityMultiplier * reviewMultiplier);
+  const rangeWidth = reviewCount >= 1000 ? 0.3 : reviewCount >= 200 ? 0.4 : 0.5;
+  const directional_annual_low = Math.max(0, Math.round((directionalAnnualValue * (1 - rangeWidth)) / 500) * 500);
+  const directional_annual_high = Math.max(directional_annual_low, Math.round((directionalAnnualValue * (1 + rangeWidth)) / 500) * 500);
+  const monthly_value = Math.round(directionalAnnualValue / 12);
+  const annual_value = directionalAnnualValue;
 
   return {
     avg_customer_value,
@@ -877,9 +891,14 @@ function computeOpportunityValueEstimate(
     missed_discoveries,
     monthly_value,
     annual_value,
+    directional_annual_low,
+    directional_annual_high,
+    opportunity_confidence: reviewCount >= 1000 ? "medium" : "preliminary",
+    reputation_score: reputationScore,
+    review_count: reviewCount,
     is_estimate: true,
     measured: true,
-    benchmark_source: "local category benchmark",
+    benchmark_source: "local category benchmark with business reputation evidence",
   };
 }
 

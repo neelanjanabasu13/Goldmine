@@ -1298,15 +1298,18 @@
         }
 
         const visibilityGap = Math.round(Number(estimate.visibility_gap || 0) * 100);
-        const annualValue = Number(estimate.annual_value || 0);
+        const annualLow = Number(estimate.directional_annual_low || estimate.annual_value || 0);
+        const annualHigh = Number(estimate.directional_annual_high || estimate.annual_value || 0);
         const monthlyValue = Number(estimate.monthly_value || 0);
         const monthlySearches = Number(estimate.monthly_searches || 0);
         const conversionRate = Math.round(Number(estimate.conversion_rate || 0) * 100);
         const customerValue = Number(estimate.avg_customer_value || 0);
+        const reputationScore = Number(estimate.reputation_score || b.quality?.score || 0);
+        const reviewCount = Number(estimate.review_count || b.review_count || 0);
         costCard.innerHTML = `
-          <p><span class="out">GBP ${annualValue.toLocaleString()}</span> estimated annual opportunity.</p>
-          <p style="margin-top: 8px;">${visibilityGap}% of completed AI queries did not name this business, which equates to an indicative <span class="out">GBP ${monthlyValue.toLocaleString()}</span> monthly opportunity.</p>
-          <span class="caveat">Indicative planning estimate for an established local ${category} business: ${monthlySearches.toLocaleString()} monthly discovery searches, a ${conversionRate}% conversion rate and GBP ${customerValue.toLocaleString()} expected first-year customer value. It is a prospecting estimate, not a revenue forecast.</span>
+          <p><span class="out">GBP ${annualLow.toLocaleString()} to GBP ${annualHigh.toLocaleString()}</span> directional annual opportunity.</p>
+          <p style="margin-top: 8px;">${visibilityGap}% of completed AI queries did not name this business. Their ${reputationScore}-point reputation score and ${reviewCount.toLocaleString()} reviews shape this preliminary range.</p>
+          <span class="caveat">Built from completed AI visibility tests and a local ${category} planning benchmark of ${monthlySearches.toLocaleString()} monthly discovery searches, a ${conversionRate}% conversion rate and GBP ${customerValue.toLocaleString()} expected first-year customer value. A paid Goldmine report adds service and pricing signals, query-level local demand and a tailored customer-value model.</span>
         `;
       }
 
