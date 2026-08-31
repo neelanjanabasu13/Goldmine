@@ -2649,17 +2649,24 @@ app.get("/api/business/:placeId", async (req: Request, res: Response) => {
 app.post("/api/outreach/:placeId", async (req: Request, res: Response) => {
   const { placeId } = req.params;
   const body = req.body || {};
-  let business = await dbGetBusiness(placeId);
-
-  // If not directly in store, search through runs
-  if (!business) {
-    for (const run of await dbListRuns()) {
-      const found = (run.results || []).find((b: any) => b.place_id === placeId);
-      if (found) {
-        business = found;
-        break;
-      }
-    }
+  // A run is the authoritative evidence snapshot for this action. Prefer its
+  // fully completed result over an older business document, which may have
+  // been saved by a previous partial scan of the same place.
+  let business: any = null;
+  const runs = await dbListRuns();
+  const matchingRunResults = runs
+    .flatMap((run: any) => (run.results || []).map((candidate: any) => ({ candidate, finished_at: run.finished_at || run.started_at || "" })))
+    .filter(({ candidate }: any) => candidate.place_id === placeId)
+    .sort((a: any, b: any) => {
+      const aComplete = hasCompleteAiVisibility(a.candidate) ? 1 : 0;
+      const bComplete = hasCompleteAiVisibility(b.candidate) ? 1 : 0;
+      if (aComplete !== bComplete) return bComplete - aComplete;
+      return String(b.finished_at).localeCompare(String(a.finished_at));
+    });
+  if (matchingRunResults.length > 0) {
+    business = matchingRunResults[0].candidate;
+  } else {
+    business = await dbGetBusiness(placeId);
   }
 
   if (!business) {
@@ -2671,8 +2678,7 @@ app.post("/api/outreach/:placeId", async (req: Request, res: Response) => {
     res.status(422).json({ error: "Outreach is unavailable until all ten AI visibility queries have completed." });
     return;
   }
-  // The scan intentionally defers this external check so it remains fast.
-  // Run it only after the user requests an actual prospect email.
+
   if (business.discovery?.brand_check_status === "pending" || business.discovery?.brand_check_status === undefined) {
     await verifyMultiLocationBrands([business], business.discovery?.scope || "London, UK");
     await dbSaveBusiness(business.place_id, business);
