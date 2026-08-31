@@ -1750,11 +1750,19 @@ async function runDiscoveryPipeline(
     });
 
     const qualified = computeQualityAndFilter(normalized);
-    await verifyMultiLocationBrands(qualified, location);
-    const top20 = qualified.filter((business) => business.discovery?.outreach_eligible !== false);
+    // Score the whole returned cohort for a transparent reputation benchmark,
+    // but only verify brands for the limited set that can actually receive the
+    // full audit and ten-query measurement in this run. This avoids spending
+    // 60 extra Places requests to prove facts about candidates we will not
+    // present as scored prospects.
+    const rankedForVerification = qualified
+      .filter((business) => business.discovery?.outreach_eligible !== false)
+      .slice(0, MAX_AUDIT_CANDIDATES);
+    await verifyMultiLocationBrands(rankedForVerification, location);
+    const top20 = rankedForVerification.filter((business) => business.discovery?.outreach_eligible !== false);
     const qualifiedCount = qualified.length;
-    const excludedMultiLocationCount = qualifiedCount - top20.length;
-    const auditCandidates = top20.slice(0, MAX_AUDIT_CANDIDATES);
+    const excludedMultiLocationCount = qualified.filter((business) => business.discovery?.outreach_eligible === false).length;
+    const auditCandidates = top20;
 
     // Persist candidate records concurrently. Serial writes would turn the
     // durable store itself into the scan bottleneck.
@@ -2275,6 +2283,7 @@ async function runDiscoveryPipeline(
         query: discoveryQuery,
         candidates_returned: candidatesCount,
         qualified_candidates: qualifiedCount,
+        brand_verified_candidates: rankedForVerification.length,
         outreach_eligible_candidates: top20.length,
         excluded_multi_location_candidates: excludedMultiLocationCount,
         scope: location,

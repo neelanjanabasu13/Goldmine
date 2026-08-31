@@ -854,8 +854,9 @@
         const returned = Number(discovery.candidates_returned || runDoc.stage_counts?.discovering || results.length);
         const source = discovery.source || "Google Places Text Search";
         const excludedMultiLocation = Number(discovery.excluded_multi_location_candidates || runDoc.stage_counts?.excluded_multi_location || 0);
+        const brandVerified = Number(discovery.brand_verified_candidates || 0);
         document.getElementById("resultsScope").textContent =
-          `${source} returned ${returned} candidates in the requested area. ${excludedMultiLocation} multi-location brand record${excludedMultiLocation === 1 ? " was" : "s were"} excluded from prospect scoring. This is a candidate cohort, not a complete market census or a Google search/ad ranking.`;
+          `${source} returned ${returned} candidates in the requested area. Goldmine brand-verified the ${brandVerified} candidates eligible for full analysis; ${excludedMultiLocation} multi-location brand record${excludedMultiLocation === 1 ? " was" : "s were"} excluded from prospect scoring. This is a candidate cohort, not a complete market census or a Google search/ad ranking.`;
 
         const tbody = document.getElementById("resultsTableBody");
         tbody.innerHTML = "";
