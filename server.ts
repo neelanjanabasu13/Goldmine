@@ -2018,29 +2018,33 @@ async function runDiscoveryPipeline(
             });
             if (uncached.length === 0) return;
 
-            const searchPrompt = `Act as an AI local recommendation assistant in ${loc}. Use Google Search grounding to answer EACH customer query below independently. Return JSON only in this exact shape: {"results":[{"query":"exact input query","answer_text":"the recommendation response for that query","businesses":[{"name":"business name","rank":1}]}]}. Include every query, preserve its exact text, and list up to five recommended businesses in rank order.\n\nCustomer queries:\n${JSON.stringify(uncached.map(({ query }) => query))}`;
-            try {
-              const response = await withTimeout(
-                callGeminiWithRetry(ai, { model: MODEL, contents: searchPrompt, config: { tools: [{ googleSearch: {} }] } }, 1, 1500),
-                GROUNDING_QUERY_TIMEOUT_MS,
-                `Grounded locality batch for ${loc}`
-              );
-              const parsed = parseGroundedBatch(response.text?.trim() || "", uncached.map(({ query }) => query));
-              for (const { query, qIdx } of uncached) {
+            // Each grounded query is intentionally independent. A ten-query
+            // mega-prompt frequently exceeds the grounding deadline and then
+            // destroys all ten measurements at once. Running bounded parallel
+            // single-query calls preserves every successful result and keeps
+            // the exact ten-question methodology intact.
+            await runWithConcurrency(uncached, Math.min(4, GROUNDING_QUERY_CONCURRENCY), async ({ query, qIdx }) => {
+              const searchPrompt = `Act as an AI local recommendation assistant in ${loc}. Use Google Search grounding to answer this one customer query. Return JSON only in this exact shape: {"results":[{"query":"${query.replace(/"/g, '\\"')}","answer_text":"the recommendation response","businesses":[{"name":"business name","rank":1}]}]}. Preserve the exact query and list up to five recommended businesses in rank order.\n\nCustomer query: ${query}`;
+              try {
+                const response = await withTimeout(
+                  callGeminiWithRetry(ai, { model: MODEL, contents: searchPrompt, config: { tools: [{ googleSearch: {} }] } }, 1, 1500),
+                  GROUNDING_QUERY_TIMEOUT_MS,
+                  `Grounded query for ${loc}`
+                );
+                const parsed = parseGroundedBatch(response.text?.trim() || "", [query]);
                 const parsedResult = parsed.get(query);
                 if (!parsedResult) {
-                  markFailed(groupBusinesses, qIdx);
-                  continue;
+                  markFailed(groupBusinesses, qIdx, "Grounded response did not contain a usable answer for this query.");
+                  return;
                 }
                 const result: GroundedQueryResult = { ...parsedResult, tested_at: new Date().toISOString() };
                 await saveGroundedQuery(category, loc, query, result);
                 applyGroundedResult(groupBusinesses, groupNormalized, qIdx, result);
+              } catch (err) {
+                console.warn(`Gemini Search Grounding failed for query in ${loc}:`, err);
+                markFailed(groupBusinesses, qIdx, String((err as any)?.message || "AI response was unavailable for this query."));
               }
-            } catch (err) {
-              console.warn(`Gemini Search Grounding batch failed for ${loc}:`, err);
-              const reason = String((err as any)?.message || "AI response was unavailable for this locality.");
-              for (const { qIdx } of uncached) markFailed(groupBusinesses, qIdx, reason);
-            }
+            });
           }),
           VISIBILITY_STAGE_TIMEOUT_MS,
           "AI visibility stage"
