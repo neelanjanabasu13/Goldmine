@@ -2799,16 +2799,21 @@ app.post("/api/outreach/:placeId", async (req: Request, res: Response) => {
     const bodyText = subjectMatch
       ? outreachText.replace(/^Subject:\s*.+\n+/i, "").trim()
       : outreachText;
-    res.json({
-      outreach: outreachText,
-      subject,
-      body: bodyText,
-      email: business.contact?.email || persistedBusiness?.contact?.email || null,
-      source_url: business.contact?.source_url || persistedBusiness?.contact?.source_url || null,
-      place_id: business.place_id,
-      name: business.name,
-    });
-    return;
+    // Older drafts could contain only a Subject line. Treat those as invalid
+    // cache entries so the user receives a complete draft on the next click.
+    const usableCachedDraft = bodyText.length >= 80 && !/^Subject:\s*/i.test(bodyText);
+    if (usableCachedDraft) {
+      res.json({
+        outreach: outreachText,
+        subject,
+        body: bodyText,
+        email: business.contact?.email || persistedBusiness?.contact?.email || null,
+        source_url: business.contact?.source_url || persistedBusiness?.contact?.source_url || null,
+        place_id: business.place_id,
+        name: business.name,
+      });
+      return;
+    }
   }
 
   // Retry any non-positive check here. Earlier versions could persist an
@@ -2868,7 +2873,26 @@ Use only these facts:
 
 Invent no statistic, name or claim outside that list.
 Do not use em dashes.
-Open with the observation about their reputation, state the gap with one number, give the competitor comparison without naming the competitor, close with one specific next step.`;
+Open with the observation about their reputation, state the gap with one number, give the competitor comparison without naming the competitor, close with one specific next step.
+Return exactly two parts: one line beginning "Subject:", then a blank line, then the complete email body. Never return only a subject line.`;
+
+  const createFallbackOutreach = () => {
+    const subject = `Local AI search audit for ${business.name}`;
+    const competitorSentence = business.competitive_gap?.name
+      ? "A competitor with lower customer ratings is currently being recommended more often."
+      : "";
+    const body = `Hi team at ${business.name},
+
+Your ${business.rating}-star rating from ${business.review_count} reviews puts you in the top tier for quality locally.
+
+However, in our recent search intelligence audit, your business is visible in only ${business.ai?.visibility || 0}% of relevant queries customers ask AI. ${competitorSentence}
+
+We specialize in helping reputable businesses capture their full local AI search market. Are you free for a 10-minute call this Thursday to review the exact queries you are missing?
+
+Best regards,
+Growth Team`;
+    return { subject, body, outreach: `Subject: ${subject}\n\n${body}` };
+  };
 
   try {
     const ai = getGenAI();
@@ -2896,6 +2920,13 @@ Open with the observation about their reputation, state the gap with one number,
       bodyText = outreachText.replace(/^Subject:\s*.+\n+/i, "").trim();
     }
 
+    if (bodyText.length < 80 || /^Subject:\s*/i.test(bodyText)) {
+      const fallback = createFallbackOutreach();
+      outreachText = fallback.outreach;
+      subject = fallback.subject;
+      bodyText = fallback.body;
+    }
+
     business.outreach = outreachText;
     await dbSaveBusiness(business.place_id, business);
 
@@ -2918,25 +2949,13 @@ Open with the observation about their reputation, state the gap with one number,
     });
   } catch (err: any) {
     console.error("Failed to generate outreach email:", err);
-    // Fallback cold email strictly respecting constraints if API fails
-    const fallbackSubject = `Local AI search audit for ${business.name}`;
-    const fallbackBody = `Hi team at ${business.name},
-
-Your ${business.rating}-star rating from ${business.review_count} reviews puts you in the top tier for quality locally.
-
-However, in our recent search intelligence audit, your business is visible in only ${business.ai?.visibility || 0}% of relevant queries customers ask AI. ${competitorCompFact ? "A competitor with lower customer ratings is currently being recommended more often." : ""}
-
-We specialize in helping reputable businesses capture their full local AI search market. Are you free for a 10-minute call this Thursday to review the exact queries you are missing?
-
-Best regards,
-Growth Team`;
-
-    business.outreach = `Subject: ${fallbackSubject}\n\n${fallbackBody}`;
+    const fallback = createFallbackOutreach();
+    business.outreach = fallback.outreach;
     await dbSaveBusiness(business.place_id, business);
     res.json({
       outreach: business.outreach,
-      subject: fallbackSubject,
-      body: fallbackBody,
+      subject: fallback.subject,
+      body: fallback.body,
       email: business.contact?.email || null,
       source_url: business.contact?.source_url || null,
       place_id: business.place_id,
