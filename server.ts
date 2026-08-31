@@ -740,42 +740,45 @@ async function discoverContactInfo(
 // -------------------------------------------------------------
 // Opportunity Value Calculations
 // -------------------------------------------------------------
+// This is the expected first-year value of a newly acquired customer, rather
+// than a single transaction. It keeps the opportunity estimate useful for an
+// agency deciding whether a prospect warrants outreach.
 const CATEGORY_AVG_CUSTOMER_VALUES: Record<string, number> = {
-  "Restaurants and cafés": 35,
-  "Restaurants and cafes": 35,
-  "Bars and pubs": 30,
-  "Beauty and aesthetics": 60,
-  "Hair": 45,
-  "Fitness": 40,
-  "Dental": 180,
-  "Private healthcare": 150,
-  "Veterinary": 120,
-  "Legal": 950,
-  "Accountancy": 600,
-  "Estate agencies": 2500,
-  "Retail": 50,
-  "Home services": 220,
-  "Automotive": 300,
-  "Hospitality": 120,
+  "Restaurants and cafés": 120,
+  "Restaurants and cafes": 120,
+  "Bars and pubs": 100,
+  "Beauty and aesthetics": 240,
+  "Hair": 180,
+  "Fitness": 480,
+  "Dental": 600,
+  "Private healthcare": 800,
+  "Veterinary": 450,
+  "Legal": 3000,
+  "Accountancy": 2000,
+  "Estate agencies": 5000,
+  "Retail": 160,
+  "Home services": 1000,
+  "Automotive": 800,
+  "Hospitality": 600,
 };
 
 const CATEGORY_OPPORTUNITY_BENCHMARKS: Record<string, { monthly_searches: number; conversion_rate: number }> = {
-  "Restaurants and cafés": { monthly_searches: 240, conversion_rate: 0.03 },
-  "Restaurants and cafes": { monthly_searches: 240, conversion_rate: 0.03 },
-  "Bars and pubs": { monthly_searches: 200, conversion_rate: 0.03 },
-  "Beauty and aesthetics": { monthly_searches: 160, conversion_rate: 0.04 },
-  "Hair": { monthly_searches: 140, conversion_rate: 0.04 },
-  "Fitness": { monthly_searches: 120, conversion_rate: 0.04 },
-  "Dental": { monthly_searches: 80, conversion_rate: 0.04 },
-  "Private healthcare": { monthly_searches: 70, conversion_rate: 0.04 },
-  "Veterinary": { monthly_searches: 70, conversion_rate: 0.04 },
-  "Legal": { monthly_searches: 35, conversion_rate: 0.03 },
-  "Accountancy": { monthly_searches: 45, conversion_rate: 0.03 },
-  "Estate agencies": { monthly_searches: 60, conversion_rate: 0.03 },
-  "Retail": { monthly_searches: 180, conversion_rate: 0.03 },
-  "Home services": { monthly_searches: 90, conversion_rate: 0.04 },
-  "Automotive": { monthly_searches: 70, conversion_rate: 0.04 },
-  "Hospitality": { monthly_searches: 140, conversion_rate: 0.03 },
+  "Restaurants and cafés": { monthly_searches: 600, conversion_rate: 0.04 },
+  "Restaurants and cafes": { monthly_searches: 600, conversion_rate: 0.04 },
+  "Bars and pubs": { monthly_searches: 500, conversion_rate: 0.04 },
+  "Beauty and aesthetics": { monthly_searches: 500, conversion_rate: 0.05 },
+  "Hair": { monthly_searches: 500, conversion_rate: 0.05 },
+  "Fitness": { monthly_searches: 400, conversion_rate: 0.05 },
+  "Dental": { monthly_searches: 250, conversion_rate: 0.04 },
+  "Private healthcare": { monthly_searches: 200, conversion_rate: 0.04 },
+  "Veterinary": { monthly_searches: 180, conversion_rate: 0.04 },
+  "Legal": { monthly_searches: 120, conversion_rate: 0.03 },
+  "Accountancy": { monthly_searches: 140, conversion_rate: 0.03 },
+  "Estate agencies": { monthly_searches: 180, conversion_rate: 0.03 },
+  "Retail": { monthly_searches: 600, conversion_rate: 0.03 },
+  "Home services": { monthly_searches: 350, conversion_rate: 0.04 },
+  "Automotive": { monthly_searches: 250, conversion_rate: 0.04 },
+  "Hospitality": { monthly_searches: 300, conversion_rate: 0.04 },
 };
 
 function getOpportunityBenchmark(category: string): { monthly_searches: number; conversion_rate: number } {
@@ -788,7 +791,7 @@ function getOpportunityBenchmark(category: string): { monthly_searches: number; 
       return benchmark;
     }
   }
-  return { monthly_searches: 120, conversion_rate: 0.03 };
+  return { monthly_searches: 300, conversion_rate: 0.04 };
 }
 
 function getAvgCustomerValue(category: string, override?: number): number {
