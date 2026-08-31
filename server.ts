@@ -2209,7 +2209,10 @@ async function runDiscoveryPipeline(
             // destroys all ten measurements at once. Running bounded parallel
             // single-query calls preserves every successful result and keeps
             // the exact ten-question methodology intact.
-            await runWithConcurrency(uncached, Math.min(4, GROUNDING_QUERY_CONCURRENCY), async ({ query, qIdx }) => {
+            // Five calls at a time keeps the full ten-query method within two
+            // bounded rounds (rather than three rounds of four) without
+            // turning the request into an unbounded quota burst.
+            await runWithConcurrency(uncached, Math.min(5, GROUNDING_QUERY_CONCURRENCY), async ({ query, qIdx }) => {
               const searchPrompt = `Act as an AI local recommendation assistant in ${loc}. Use Google Search grounding to answer this one customer query. Return JSON only in this exact shape: {"results":[{"query":"${query.replace(/"/g, '\\"')}","answer_text":"the recommendation response","businesses":[{"name":"business name","rank":1}]}]}. Preserve the exact query and list up to five recommended businesses in rank order.\n\nCustomer query: ${query}`;
               try {
                 const response = await withTimeout(
