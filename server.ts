@@ -29,6 +29,7 @@ const GROUNDING_QUERY_TIMEOUT_MS = Math.max(1_000, Number(process.env.GROUNDING_
 const VISIBILITY_STAGE_TIMEOUT_MS = Math.max(1_000, Number(process.env.VISIBILITY_STAGE_TIMEOUT_MS || 55_000));
 const PLACES_REQUEST_TIMEOUT_MS = Math.max(1_000, Number(process.env.PLACES_REQUEST_TIMEOUT_MS || 8_000));
 const PLACES_MAX_PAGES = Math.max(1, Math.min(3, Number(process.env.PLACES_MAX_PAGES || 3)));
+const DISCOVERY_QUERY_VARIANTS = 3;
 
 function hasMeasuredAiVisibility(business: any): boolean {
   return Number(business?.ai?.total || 0) > 0
@@ -1045,6 +1046,11 @@ function computePercentileRanks(values: number[]): number[] {
 // Google Places API Pagination
 // -------------------------------------------------------------
 async function fetchPlacesPaginated(category: string, location: string, maxPages = PLACES_MAX_PAGES): Promise<any[]> {
+  const query = location ? `${category} in ${location}` : category;
+  return fetchPlacesTextQuery(query, maxPages);
+}
+
+async function fetchPlacesTextQuery(query: string, maxPages = PLACES_MAX_PAGES): Promise<any[]> {
   const mapsApiKey = process.env.MAPS_API_KEY;
   if (!mapsApiKey) {
     throw new Error("MAPS_API_KEY environment variable is not configured.");
@@ -1061,8 +1067,6 @@ async function fetchPlacesPaginated(category: string, location: string, maxPages
   const collected: any[] = [];
   const seenIds = new Set<string>();
   let pageToken: string | undefined = undefined;
-  const query = location ? `${category} in ${location}` : category;
-
   for (let pageIdx = 0; pageIdx < maxPages; pageIdx++) {
     const payload: any = { textQuery: query, pageSize: 20 };
     if (pageToken) {
@@ -1106,6 +1110,42 @@ async function fetchPlacesPaginated(category: string, location: string, maxPages
   }
 
   return collected;
+}
+
+function getDiscoveryQueries(category: string, location: string): string[] {
+  // Places Text Search returns a relevance-ranked candidate set, not a market
+  // database. Combining three transparent lenses produces a broader local
+  // cohort while keeping latency close to a single request (they run in
+  // parallel) and without pretending that one query is a full census.
+  return Array.from(new Set([
+    `${category} in ${location}`,
+    `local ${category} in ${location}`,
+    `independent ${category} in ${location}`,
+  ])).slice(0, DISCOVERY_QUERY_VARIANTS);
+}
+
+async function discoverPlacesCohort(category: string, location: string): Promise<{ places: any[]; queries: string[]; completedQueries: number }> {
+  const queries = getDiscoveryQueries(category, location);
+  const attempts = await Promise.allSettled(
+    queries.map((query) => fetchPlacesTextQuery(query, PLACES_MAX_PAGES))
+  );
+  const byPlaceId = new Map<string, any>();
+  let completedQueries = 0;
+
+  for (const attempt of attempts) {
+    if (attempt.status !== "fulfilled") continue;
+    completedQueries++;
+    for (const place of attempt.value) {
+      const placeId = String(place?.id || "");
+      if (placeId && !byPlaceId.has(placeId)) byPlaceId.set(placeId, place);
+    }
+  }
+
+  if (completedQueries === 0) {
+    throw new Error("Google Places did not return a candidate cohort for this area.");
+  }
+
+  return { places: [...byPlaceId.values()], queries, completedQueries };
 }
 
 function normalizePlace(p: any, category: string, location: string) {
@@ -1730,14 +1770,17 @@ async function runDiscoveryPipeline(
     // A Places Text Search is capped at 60 results. The input must therefore
     // be a bounded prospecting area, not an entire city presented as a market.
     requireBoundedLocation(location);
-    const rawPlaces = await fetchPlacesPaginated(category, location, PLACES_MAX_PAGES);
+    const discoveryResponse = await discoverPlacesCohort(category, location);
+    const rawPlaces = discoveryResponse.places;
     const normalized = rawPlaces.map((p) => normalizePlace(p, category, location));
     const candidatesCount = normalized.length;
-    const discoveryQuery = `${category} in ${location}`;
+    const discoveryQuery = discoveryResponse.queries.join(" | ");
     for (const business of normalized) {
       business.discovery = {
         source: "Google Places Text Search",
         query: discoveryQuery,
+        query_variants: discoveryResponse.queries,
+        query_variants_completed: discoveryResponse.completedQueries,
         candidates_returned: candidatesCount,
         market_coverage: "candidate_cohort_not_market_census",
         scope: location,
@@ -1820,6 +1863,8 @@ async function runDiscoveryPipeline(
       discovery: {
         source: "Google Places Text Search",
         query: discoveryQuery,
+        query_variants: discoveryResponse.queries,
+        query_variants_completed: discoveryResponse.completedQueries,
         candidates_returned: candidatesCount,
         qualified_candidates: qualifiedCount,
         brand_verified_candidates: rankedForVerification.length,
@@ -2347,6 +2392,8 @@ async function runDiscoveryPipeline(
       discovery: {
         source: "Google Places Text Search",
         query: discoveryQuery,
+        query_variants: discoveryResponse.queries,
+        query_variants_completed: discoveryResponse.completedQueries,
         candidates_returned: candidatesCount,
         qualified_candidates: qualifiedCount,
         brand_verified_candidates: rankedForVerification.length,

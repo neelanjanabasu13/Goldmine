@@ -989,10 +989,11 @@
         const discovery = runDoc.discovery || {};
         const returned = Number(discovery.candidates_returned || runDoc.stage_counts?.discovering || results.length);
         const source = discovery.source || "Google Places Text Search";
+        const discoveryLenses = Number(discovery.query_variants_completed || (Array.isArray(discovery.query_variants) ? discovery.query_variants.length : 1));
         const excludedMultiLocation = Number(discovery.excluded_multi_location_candidates || runDoc.stage_counts?.excluded_multi_location || 0);
         const brandVerified = Number(discovery.brand_verified_candidates || 0);
         document.getElementById("resultsScope").textContent =
-          `${source} returned ${returned} candidates in the requested area. Goldmine checked the ${brandVerified} highest-reputation candidates and excluded ${excludedMultiLocation} multi-location brand record${excludedMultiLocation === 1 ? "" : "s"} from prospect scoring and outreach. This is a candidate cohort, not a complete market census or a Google search/ad ranking.`;
+          `${source} ran ${discoveryLenses} local discovery lens${discoveryLenses === 1 ? "" : "es"} and returned ${returned} unique candidates in the requested area. Goldmine checked the ${brandVerified} highest-reputation candidates and excluded ${excludedMultiLocation} multi-location brand record${excludedMultiLocation === 1 ? "" : "s"} from prospect scoring and outreach. This is a candidate cohort, not a complete market census or a Google search/ad ranking.`;
         const liveNotice = document.getElementById("resultsLiveNotice");
         liveNotice.style.display = analysisInProgress ? "block" : "none";
         liveNotice.textContent = analysisInProgress
