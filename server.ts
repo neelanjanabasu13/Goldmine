@@ -19,6 +19,11 @@ const MODEL = process.env.GEMINI_MODEL || "gemini-3.7-flash";
 const FALLBACK_MODELS = [MODEL, "gemini-3.7-flash", "gemini-3.1-flash-lite", "gemini-flash-latest"];
 const CUSTOMER_QUERY_COUNT = 10;
 const MAX_AUDIT_CANDIDATES = 10;
+// We inspect more than the ten businesses that receive a full audit so that a
+// chain exclusion does not leave a local market with an artificially tiny
+// prospect set. This is deliberately bounded: Places has no first-party
+// "independent business" flag, so each candidate still needs a real check.
+const MAX_BRAND_VERIFICATION_CANDIDATES = 25;
 const GROUNDING_QUERY_CONCURRENCY = Math.max(1, Number(process.env.GROUNDING_QUERY_CONCURRENCY || 8));
 const GROUNDING_QUERY_TIMEOUT_MS = Math.max(1_000, Number(process.env.GROUNDING_QUERY_TIMEOUT_MS || 18_000));
 const VISIBILITY_STAGE_TIMEOUT_MS = Math.max(1_000, Number(process.env.VISIBILITY_STAGE_TIMEOUT_MS || 55_000));
@@ -1256,7 +1261,15 @@ async function verifyMultiLocationBrands(businesses: any[], location: string) {
   await runWithConcurrency(businesses, 8, async (business) => {
     if (business.discovery?.outreach_eligible === false) return;
     const term = brandSearchTerm(business.name || "");
-    if (!term) return;
+    if (!term) {
+      business.discovery = {
+        ...(business.discovery || {}),
+        brand_check_status: "unverified",
+        outreach_eligible: false,
+        exclusion_reason: "Goldmine could not verify that this is a single-location independent business.",
+      };
+      return;
+    }
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), PLACES_REQUEST_TIMEOUT_MS);
@@ -1267,7 +1280,15 @@ async function verifyMultiLocationBrands(businesses: any[], location: string) {
         signal: controller.signal,
       });
       clearTimeout(timeout);
-      if (!response.ok) return;
+      if (!response.ok) {
+        business.discovery = {
+          ...(business.discovery || {}),
+          brand_check_status: "unavailable",
+          outreach_eligible: false,
+          exclusion_reason: "Goldmine could not complete the independent-business check for this candidate.",
+        };
+        return;
+      }
       const data: any = await response.json();
       const matchingPlaces = (data.places || []).filter((place: any) => {
         const placeName = typeof place.displayName === "object"
@@ -1292,6 +1313,8 @@ async function verifyMultiLocationBrands(businesses: any[], location: string) {
       business.discovery = {
         ...(business.discovery || {}),
         brand_check_status: "unavailable",
+        outreach_eligible: false,
+        exclusion_reason: "Goldmine could not complete the independent-business check for this candidate.",
       };
     }
   });
@@ -1747,15 +1770,17 @@ async function runDiscoveryPipeline(
 
     const qualified = computeQualityAndFilter(normalized);
     // Score the whole returned cohort for a transparent reputation benchmark,
-    // but only verify brands for the limited set that can actually receive the
-    // full audit and ten-query measurement in this run. This avoids spending
-    // 60 extra Places requests to prove facts about candidates we will not
-    // present as scored prospects.
+    // then independently verify a bounded, larger shortlist. Verifying only
+    // the first ten used to mean that one chain-heavy result page produced an
+    // implausibly small lead list. We still never claim the whole cohort is
+    // independent until each business has passed its own brand check.
     const rankedForVerification = qualified
       .filter((business) => business.discovery?.outreach_eligible !== false)
-      .slice(0, MAX_AUDIT_CANDIDATES);
+      .slice(0, MAX_BRAND_VERIFICATION_CANDIDATES);
     await verifyMultiLocationBrands(rankedForVerification, location);
-    const top20 = rankedForVerification.filter((business) => business.discovery?.outreach_eligible !== false);
+    const top20 = rankedForVerification
+      .filter((business) => business.discovery?.outreach_eligible !== false && business.discovery?.brand_check_status === "verified")
+      .slice(0, MAX_AUDIT_CANDIDATES);
     const qualifiedCount = qualified.length;
     const excludedMultiLocationCount = qualified.filter((business) => business.discovery?.outreach_eligible === false).length;
     const auditCandidates = top20;
