@@ -521,9 +521,9 @@
           </div>
         </div>
 
-        <!-- Section 3: Who is Winning Instead -->
-        <div class="section rise in d3">
-          <div class="lab">WHO IS WINNING INSTEAD</div>
+        <!-- Section 3: AI recommendation evidence -->
+        <div class="section rise in d3" id="competitorSection">
+          <div class="lab">WHO AI IS RECOMMENDING</div>
           <div id="competitorCard"></div>
         </div>
 
@@ -1225,44 +1225,36 @@
           techFindingsEl.innerHTML = `<div style="font-size: 14px; color: var(--muted); padding: 8px 0;">Performance: ${b.site?.performance || 0}/100 · SEO: ${b.site?.seo || 0}/100</div>`;
         }
 
-        // 3. WHO IS WINNING INSTEAD
+        // 3. WHO AI IS RECOMMENDING
         const compCard = document.getElementById("competitorCard");
-        if (b.competitive_gap && b.competitive_gap.name) {
-          const comp = b.competitive_gap;
+        const compSection = document.getElementById("competitorSection");
+        const storedWinners = Array.isArray(b.ai_market_winners) ? b.ai_market_winners : [];
+        const runWinners = Array.isArray(currentRunDoc?.unmatched_names)
+          ? currentRunDoc.unmatched_names.slice(0, 3).map((winner) => ({
+              name: winner.name,
+              appearances: winner.appearances || winner.count || 0,
+            }))
+          : [];
+        const marketWinners = storedWinners.length > 0 ? storedWinners : runWinners;
+        if (marketWinners.length > 0 && totalTested > 0) {
+          compSection.style.display = "block";
           compCard.innerHTML = `
-            <div class="versus">
-              <div class="side them">
-                <div class="lab" style="color: var(--neg);">${escapeHtml(b.name)} (THIS CANDIDATE)</div>
-                <div style="font-family: 'Bricolage Grotesque', sans-serif; font-size: 20px; font-weight: 800; margin: 6px 0;">
-                  ${b.rating || 0}★ <span style="font-size: 14px; font-weight: 400; color: var(--muted);">(${b.review_count || 0} reviews)</span>
+            <div class="queries">
+              ${marketWinners.map((winner) => `
+                <div class="query">
+                  <span class="mark" style="color: var(--teal); font-size: 11px;">■</span>
+                  <span>${escapeHtml(winner.name)}</span>
+                  <span class="rank">named in ${winner.appearances} of ${totalTested}</span>
                 </div>
-                <div style="font-size: 14px; color: var(--neg); font-weight: 500;">
-                  AI mentions: ${totalTested > 0 ? `${mentions} of ${totalTested}` : "not measured"}
-                </div>
-              </div>
-              <div class="vs">VS</div>
-              <div class="side">
-                <div class="lab" style="color: var(--pos);">${escapeHtml(comp.name)} (COMPETITOR)</div>
-                <div style="font-family: 'Bricolage Grotesque', sans-serif; font-size: 20px; font-weight: 800; margin: 6px 0;">
-                  ${comp.rating || 0}★ <span style="font-size: 14px; font-weight: 400; color: var(--muted);">(${comp.review_count || 0} reviews)</span>
-                </div>
-                <div style="font-size: 14px; color: var(--pos); font-weight: 500;">
-                  AI mentions: ${totalTested > 0 ? `${comp.appearances || 0} of ${comp.total_queries || totalTested}` : "not measured"}
-                </div>
-              </div>
+              `).join("")}
             </div>
             <div class="note" style="margin-top: 14px; font-size: 14px;">
-              Rated lower by customers (${comp.rating}★ vs ${b.rating}★), but named ${comp.appearances} times more often by AI.
+              These businesses were named in the completed AI recommendation responses while ${escapeHtml(b.name)} was named in ${mentions} of ${totalTested}. Names are recommendation evidence, not verified rating or ownership comparisons.
             </div>
           `;
         } else {
-          compCard.innerHTML = `
-            <div class="quote" style="padding: 18px 22px;">
-              <p style="font-size: 15px; font-style: normal; color: var(--muted);">
-                No lower-quality competitor outranked this business in AI queries.
-              </p>
-            </div>
-          `;
+          compCard.innerHTML = "";
+          compSection.style.display = "none";
         }
 
         // 4. WHAT THIS IS COSTING THEM

@@ -2432,12 +2432,26 @@ async function runDiscoveryPipeline(
     const unmatchedNamesList = Object.entries(unmatchedMap)
       .map(([name, count]) => ({ name, count }))
       .sort((a, b) => b.count - a.count);
+    const aiWinnerByName = new Map<string, { name: string; appearances: number }>();
+    for (const winner of unmatchedNamesList) {
+      const key = normalizeName(winner.name);
+      const existing = aiWinnerByName.get(key);
+      if (existing) {
+        existing.appearances += winner.count;
+      } else {
+        aiWinnerByName.set(key, { name: winner.name, appearances: winner.count });
+      }
+    }
+    const aiMarketWinners = Array.from(aiWinnerByName.values())
+      .sort((a, b) => b.appearances - a.appearances || a.name.localeCompare(b.name))
+      .slice(0, 3);
 
     const resolvedCompetitors: any[] = [];
 
     // A competitor comparison requires verified competitor place details. It
     // is intentionally deferred rather than guessing from a model answer.
     for (const b of top20) {
+      b.ai_market_winners = aiMarketWinners;
       const lowerCompetitors = resolvedCompetitors.filter(
         (c) => c.quality_score < b.quality.score
       );
