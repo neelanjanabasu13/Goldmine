@@ -1213,16 +1213,19 @@ function requireBoundedLocation(location: string) {
  * customer learn borough boundaries. A later coverage-index pass can replace
  * this text scope with authoritative GLA/ONS polygons without changing the UI.
  */
-function resolveLondonArea(rawLocation: string): { label: string; searchScope: string } {
-  const label = rawLocation.replace(/\s+/g, " ").trim().replace(/,+$/, "");
-  if (!label) throw new Error("Enter an area in London, for example Highgate, Soho or W1.");
-  if (isBroadMarketLocation(label)) requireBoundedLocation(label);
+const LONDON_AREA_SCOPES: Record<string, string> = {
+  "Soho & Carnaby": "Soho and Carnaby, London, UK", "Covent Garden & Strand": "Covent Garden and Strand, London, UK", Fitzrovia: "Fitzrovia, London, UK", Marylebone: "Marylebone, London, UK", Mayfair: "Mayfair, London, UK", Bloomsbury: "Bloomsbury, London, UK", "King's Cross & St Pancras": "King's Cross and St Pancras, London, UK", "London Bridge": "London Bridge, London, UK", "Bankside & Borough": "Bankside and Borough, London, UK", "Waterloo & South Bank": "Waterloo and South Bank, London, UK", Victoria: "Victoria, London, UK", Paddington: "Paddington, London, UK", "Notting Hill": "Notting Hill, London, UK", Shoreditch: "Shoreditch, London, UK",
+  Highgate: "Highgate, London, UK", Hampstead: "Hampstead, London, UK", "Camden Town": "Camden Town, London, UK", "Kentish Town": "Kentish Town, London, UK", "Angel & Islington": "Angel and Islington, London, UK", "Crouch End": "Crouch End, London, UK", "Muswell Hill": "Muswell Hill, London, UK", "Finsbury Park": "Finsbury Park, London, UK", "Stoke Newington": "Stoke Newington, London, UK", Finchley: "Finchley, London, UK", "Golders Green": "Golders Green, London, UK",
+  "Hackney Central": "Hackney Central, London, UK", Dalston: "Dalston, London, UK", "Bethnal Green": "Bethnal Green, London, UK", "Brick Lane": "Brick Lane, London, UK", "Canary Wharf": "Canary Wharf, London, UK", Stratford: "Stratford, London, UK", Walthamstow: "Walthamstow, London, UK", Leyton: "Leyton, London, UK", Greenwich: "Greenwich, London, UK", Blackheath: "Blackheath, London, UK",
+  Brixton: "Brixton, London, UK", Clapham: "Clapham, London, UK", Peckham: "Peckham, London, UK", Dulwich: "Dulwich, London, UK", Balham: "Balham, London, UK", Tooting: "Tooting, London, UK", Wimbledon: "Wimbledon, London, UK", Battersea: "Battersea, London, UK", Putney: "Putney, London, UK", Richmond: "Richmond, London, UK", Kingston: "Kingston upon Thames, London, UK",
+  Kensington: "Kensington, London, UK", Chelsea: "Chelsea, London, UK", Hammersmith: "Hammersmith, London, UK", Chiswick: "Chiswick, London, UK", Ealing: "Ealing, London, UK", Acton: "Acton, London, UK", "Shepherd's Bush": "Shepherd's Bush, London, UK", Wembley: "Wembley, London, UK", Harrow: "Harrow, London, UK",
+};
 
-  const alreadyLondonScoped = /\b(london|uk|united kingdom|england)\b/i.test(label);
-  return {
-    label,
-    searchScope: alreadyLondonScoped ? label : `${label}, London, UK`,
-  };
+function resolveLondonArea(rawLocation: string): { label: string; searchScope: string } {
+  const label = rawLocation.replace(/\s+/g, " ").trim();
+  const searchScope = LONDON_AREA_SCOPES[label];
+  if (!searchScope) throw new Error("Select a supported London area from the list.");
+  return { label, searchScope };
 }
 
 function getParentMarket(location: string): string {

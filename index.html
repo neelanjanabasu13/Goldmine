@@ -228,13 +228,24 @@
 
         <!-- Controls -->
         <div class="controls">
-          <input
-            id="inputLocation"
-            type="text"
-            value="Soho"
-            aria-label="Area in London"
-            placeholder="Area in London (e.g. Highgate, Soho or W1)"
-          />
+          <select id="inputLocation" aria-label="Area in London">
+            <option value="" selected disabled>Select an area in London</option>
+            <optgroup label="Central London">
+              <option>Soho &amp; Carnaby</option><option>Covent Garden &amp; Strand</option><option>Fitzrovia</option><option>Marylebone</option><option>Mayfair</option><option>Bloomsbury</option><option>King's Cross &amp; St Pancras</option><option>London Bridge</option><option>Bankside &amp; Borough</option><option>Waterloo &amp; South Bank</option><option>Victoria</option><option>Paddington</option><option>Notting Hill</option><option>Shoreditch</option>
+            </optgroup>
+            <optgroup label="North London">
+              <option>Highgate</option><option>Hampstead</option><option>Camden Town</option><option>Kentish Town</option><option>Angel &amp; Islington</option><option>Crouch End</option><option>Muswell Hill</option><option>Finsbury Park</option><option>Stoke Newington</option><option>Finchley</option><option>Golders Green</option>
+            </optgroup>
+            <optgroup label="East London">
+              <option>Hackney Central</option><option>Dalston</option><option>Bethnal Green</option><option>Brick Lane</option><option>Canary Wharf</option><option>Stratford</option><option>Walthamstow</option><option>Leyton</option><option>Greenwich</option><option>Blackheath</option>
+            </optgroup>
+            <optgroup label="South London">
+              <option>Brixton</option><option>Clapham</option><option>Peckham</option><option>Dulwich</option><option>Balham</option><option>Tooting</option><option>Wimbledon</option><option>Battersea</option><option>Putney</option><option>Richmond</option><option>Kingston</option>
+            </optgroup>
+            <optgroup label="West London">
+              <option>Kensington</option><option>Chelsea</option><option>Hammersmith</option><option>Chiswick</option><option>Ealing</option><option>Acton</option><option>Shepherd's Bush</option><option>Wembley</option><option>Harrow</option>
+            </optgroup>
+          </select>
           <select id="selectCategory">
             <option value="Restaurants and cafés" selected>Restaurants and cafés</option>
             <option value="Bars and pubs">Bars and pubs</option>
@@ -254,7 +265,7 @@
           </select>
           <button id="btnFindGold" class="btn btn-primary">FIND GOLD</button>
         </div>
-        <p class="scope-help">London only. Use the area people actually call it — Goldmine handles the search boundaries behind the scenes.</p>
+        <p class="scope-help">London only. Select a supported local area — no borough knowledge or free-text spelling required.</p>
 
         <div id="indexStatsLine" class="indexline">
           Loading index stats...
