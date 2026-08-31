@@ -94,12 +94,36 @@
       #viewLanding .controls{max-width:820px;margin-inline:auto;justify-content:center}
       #viewLanding .scope-help{text-align:center}
       #viewLanding .indexline{text-align:center}
+      .hero-action{margin-top:30px;background:var(--teal);color:#fff;padding:15px 25px}
+      .hero-action:hover{box-shadow:3px 3px 0 var(--yellow)}
       .independent-statement{max-width:790px;margin:42px auto 10px;padding:30px 0;border-top:1px solid var(--hair);border-bottom:1px solid var(--hair);text-align:center}
       .statement-kicker{color:var(--teal);font-size:11px;font-weight:700;letter-spacing:.16em;line-height:1.35;text-transform:uppercase}
       .statement-copy{font-family:'Bricolage Grotesque',Outfit,sans-serif;font-size:clamp(29px,3.45vw,43px);font-weight:800;letter-spacing:-.045em;line-height:1.02;max-width:21ch}
       .statement-copy{margin:14px auto 0}
       .statement-copy mark{background:var(--yellow);color:var(--ink);padding:0 .13em;border-radius:4px}
       .statement-detail{max-width:59ch;margin:18px auto 0;color:var(--muted);font-size:16px;line-height:1.55;font-weight:400}
+      .market-story{display:grid;grid-template-columns:minmax(0,1fr) minmax(250px,.82fr);gap:68px;max-width:930px;margin:92px auto 0;text-align:left}
+      .story-stage{position:sticky;top:28px;align-self:start;min-height:430px;padding:32px;border-radius:28px;background:radial-gradient(circle at 83% 12%,#FFF3BD 0 4%,transparent 4.2%),#F3F0E6;overflow:hidden}
+      .story-stage::before{content:"";position:absolute;width:300px;height:300px;border:1px solid rgba(15,107,112,.18);border-radius:50%;right:-132px;bottom:-106px;transition:transform .7s cubic-bezier(.2,.8,.2,1)}
+      .story-stage[data-mode="evidence"]::before{transform:scale(1.25) translate(-24px,-12px)}
+      .story-stage[data-mode="outreach"]::before{transform:scale(.72) translate(-94px,-56px)}
+      .story-stage-label{display:block;color:var(--teal);font-size:11px;font-weight:700;letter-spacing:.15em;text-transform:uppercase}
+      .story-stage-metric{display:block;margin-top:48px;font-family:'Bricolage Grotesque',Outfit,sans-serif;font-size:clamp(48px,6vw,76px);font-weight:800;letter-spacing:-.07em;line-height:.9;transition:opacity .2s}
+      .story-stage-title{display:block;margin-top:10px;font-family:'Bricolage Grotesque',Outfit,sans-serif;font-size:27px;font-weight:800;letter-spacing:-.04em;line-height:1.04;max-width:12ch}
+      .story-stage-detail{display:block;max-width:28ch;margin-top:16px;color:var(--muted);font-size:15px;line-height:1.45}
+      .story-stage-signal{position:absolute;right:31px;bottom:30px;display:flex;gap:6px;align-items:flex-end;height:54px}
+      .story-stage-signal i{width:9px;background:var(--teal);border-radius:10px;opacity:.8;animation:signal 1.8s ease-in-out infinite alternate}
+      .story-stage-signal i:nth-child(1){height:19px}.story-stage-signal i:nth-child(2){height:36px;animation-delay:.2s}.story-stage-signal i:nth-child(3){height:52px;animation-delay:.4s}.story-stage-signal i:nth-child(4){height:28px;animation-delay:.6s}
+      @keyframes signal{to{transform:scaleY(.55);opacity:.42}}
+      .story-steps{display:flex;flex-direction:column;gap:74px;padding:33px 0}
+      .story-step{opacity:.38;transition:opacity .35s,transform .35s;transform:translateY(10px)}
+      .story-step.active{opacity:1;transform:none}
+      .story-step-number{color:var(--teal);font-size:11px;font-weight:700;letter-spacing:.16em}
+      .story-step h2{margin-top:10px;font-size:clamp(28px,3.2vw,42px);max-width:11ch}
+      .story-step p{margin-top:14px;max-width:31ch;color:var(--muted);font-size:16px;line-height:1.55}
+      .scan-entry{max-width:860px;margin:104px auto 0;padding-top:50px;border-top:1px solid var(--hair)}
+      .scan-entry h2{font-size:clamp(31px,4.1vw,50px);max-width:13ch;margin:12px auto 0}
+      .scan-entry .controls{margin-top:30px}
       .indexline{font-size:13.5px;color:var(--faint);margin-top:14px;font-weight:300}
 
       /* ---------- scan screen ---------- */
@@ -208,6 +232,10 @@
         .wrap{padding:36px 20px 64px}
         .split{grid-template-columns:1fr}
         .independent-statement{padding:25px 0}
+        .market-story{grid-template-columns:1fr;gap:26px;margin-top:65px}
+        .story-stage{position:relative;top:auto;min-height:315px}
+        .story-steps{gap:42px;padding:12px 0}
+        .scan-entry{margin-top:64px;padding-top:36px}
         .half.customers{border-right:0;border-bottom:2px solid var(--line)}
         .agent{grid-template-columns:1fr;gap:6px}
         .agent .stat{text-align:left}
@@ -227,6 +255,7 @@
         <p class="sub">
           Goldmine finds independent local businesses their communities already love, but AI does not yet recommend.
         </p>
+        <button id="btnExploreMarket" class="btn hero-action">EXPLORE THE LOCAL MARKET ↓</button>
 
         <section class="independent-statement" aria-label="Who Goldmine is built for">
           <p class="statement-kicker">Built for independent local businesses</p>
@@ -237,8 +266,37 @@
         <!-- Dynamic Proof Card (Spotlight) -->
         <div id="proofCardContainer" class="rise in" style="margin-top: 36px;"></div>
 
-        <!-- Controls -->
-        <div class="controls">
+        <section class="market-story" aria-label="How Goldmine turns a local market into leads">
+          <div class="story-stage" id="storyStage" data-mode="market" aria-live="polite">
+            <span class="story-stage-label" id="storyStageLabel">Local market</span>
+            <strong class="story-stage-metric" id="storyStageMetric">Area</strong>
+            <span class="story-stage-title" id="storyStageTitle">Find the independent favourites.</span>
+            <span class="story-stage-detail" id="storyStageDetail">Start with a familiar London area, not a spreadsheet or a borough code.</span>
+            <span class="story-stage-signal" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+          </div>
+          <div class="story-steps">
+            <article class="story-step active" data-story-mode="market">
+              <span class="story-step-number">01 — MARKET</span>
+              <h2>Find the local favourites.</h2>
+              <p>Goldmine searches a defined London area, groups duplicate brands and excludes chains from the prospect list.</p>
+            </article>
+            <article class="story-step" data-story-mode="evidence">
+              <span class="story-step-number">02 — EVIDENCE</span>
+              <h2>Test what customers actually ask.</h2>
+              <p>Every eligible business is measured against the same ten customer-intent questions. No invisible “AI score” is treated as proof.</p>
+            </article>
+            <article class="story-step" data-story-mode="outreach">
+              <span class="story-step-number">03 — OUTREACH</span>
+              <h2>Turn a gap into a conversation.</h2>
+              <p>Open a business to see the evidence, website findings, local context and a grounded outreach draft in one place.</p>
+            </article>
+          </div>
+        </section>
+
+        <section class="scan-entry" id="scanEntry" aria-label="Start a Goldmine scan">
+          <span class="statement-kicker">Start a market scan</span>
+          <h2>Choose a local area. Goldmine does the rest.</h2>
+          <div class="controls">
           <select id="inputLocation" aria-label="Area in London">
             <option value="" selected disabled>Select an area in London</option>
             <optgroup label="Central London">
@@ -275,8 +333,9 @@
             <option value="Hospitality">Hospitality</option>
           </select>
           <button id="btnFindGold" class="btn btn-primary">FIND GOLD</button>
-        </div>
-        <p class="scope-help">London only. Select a supported local area — no borough knowledge or free-text spelling required.</p>
+          </div>
+          <p class="scope-help">London only. Select a supported local area — no borough knowledge or free-text spelling required.</p>
+        </section>
 
         <div id="indexStatsLine" class="indexline">
           Loading index stats...
@@ -530,6 +589,33 @@
         document.querySelectorAll(".rise").forEach((el) => observer.observe(el));
       }
 
+      function initLandingStory() {
+        const stage = document.getElementById("storyStage");
+        const steps = document.querySelectorAll(".story-step");
+        if (!stage || !steps.length) return;
+        const states = {
+          market: { label: "Local market", metric: "Area", title: "Find the independent favourites.", detail: "Start with a familiar London area, not a spreadsheet or a borough code." },
+          evidence: { label: "AI evidence", metric: "10", title: "Customer-intent questions.", detail: "A comparable question set makes each visibility finding inspectable, rather than mysterious." },
+          outreach: { label: "Outreach ready", metric: "→", title: "A reason to start the conversation.", detail: "The detail page connects the gap, the website evidence and the outreach draft." },
+        };
+        const setStage = (mode) => {
+          const state = states[mode];
+          if (!state) return;
+          stage.dataset.mode = mode;
+          document.getElementById("storyStageLabel").textContent = state.label;
+          document.getElementById("storyStageMetric").textContent = state.metric;
+          document.getElementById("storyStageTitle").textContent = state.title;
+          document.getElementById("storyStageDetail").textContent = state.detail;
+          steps.forEach((step) => step.classList.toggle("active", step.dataset.storyMode === mode));
+        };
+        const observer = new IntersectionObserver((entries) => {
+          entries.forEach((entry) => {
+            if (entry.isIntersecting) setStage(entry.target.dataset.storyMode);
+          });
+        }, { threshold: 0.62 });
+        steps.forEach((step) => observer.observe(step));
+      }
+
       // -----------------------------------------------------------
       // Navigation
       // -----------------------------------------------------------
@@ -557,6 +643,7 @@
       // -----------------------------------------------------------
       async function initApp() {
         initRiseObserver();
+        initLandingStory();
 
         // Load index stats
         try {
@@ -661,6 +748,10 @@
       // -----------------------------------------------------------
       // 2. Start Scan & Agent Execution
       // -----------------------------------------------------------
+      document.getElementById("btnExploreMarket").addEventListener("click", () => {
+        document.getElementById("scanEntry").scrollIntoView({ behavior: "smooth", block: "center" });
+      });
+
       document.getElementById("btnFindGold").addEventListener("click", async () => {
         const location = document.getElementById("inputLocation").value.trim();
         const category = document.getElementById("selectCategory").value;
