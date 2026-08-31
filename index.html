@@ -976,8 +976,8 @@
         const category = runDoc.category || "Businesses";
         const location = runDoc.location || "London";
         const results = [...(runDoc.results || [])].sort((a, b) => {
-          const aMeasured = hasMeasuredAiVisibility(a);
-          const bMeasured = hasMeasuredAiVisibility(b);
+          const aMeasured = hasCompleteAiVisibility(a);
+          const bMeasured = hasCompleteAiVisibility(b);
           if (aMeasured !== bMeasured) return aMeasured ? -1 : 1;
           return Number(b.gold_score || 0) - Number(a.gold_score || 0);
         });
@@ -998,13 +998,20 @@
         liveNotice.style.display = analysisInProgress ? "block" : "none";
         liveNotice.textContent = analysisInProgress
           ? "Your independent-business shortlist is ready. Gold scores and evidence are still being built in the background."
-          : "Every listed business has a completed evidence pack: ten grounded customer queries, website findings and an outreach draft.";
+          : "Evidence collection is complete. Gold and outreach are shown only where all ten grounded customer queries completed.";
 
         const tbody = document.getElementById("resultsTableBody");
         tbody.innerHTML = "";
 
         results.forEach((b) => {
           const tr = document.createElement("tr");
+          const completeEvidence = hasCompleteAiVisibility(b);
+          const testedCount = Array.isArray(b.ai?.queries)
+            ? b.ai.queries.filter((query) => query?.status === "tested").length
+            : 0;
+          const visibilityLabel = completeEvidence
+            ? `${b.ai.visibility}%`
+            : testedCount > 0 ? `${testedCount}/10 tested` : "Not measured";
 
           tr.innerHTML = `
             <td>
@@ -1013,11 +1020,11 @@
             </td>
             <td style="text-align: right;">${b.rating || 0}★ <span style="color: var(--faint); font-size: 13px;">(${b.review_count || 0})</span></td>
             <td style="text-align: right; color: var(--pos); font-weight: 600;">${b.quality?.score || 0}</td>
-            <td style="text-align: right; color: ${hasMeasuredAiVisibility(b) && b.ai?.visibility < 40 ? 'var(--neg)' : 'var(--faint)'}; font-weight: 600;">${hasMeasuredAiVisibility(b) ? `${b.ai.visibility}%` : 'Not measured'}</td>
-            <td class="goldcell">${hasMeasuredAiVisibility(b) ? b.gold_score : '—'}</td>
+            <td style="text-align: right; color: ${completeEvidence && b.ai?.visibility < 40 ? 'var(--neg)' : 'var(--faint)'}; font-weight: 600;">${visibilityLabel}</td>
+            <td class="goldcell">${completeEvidence ? b.gold_score : '—'}</td>
           `;
 
-          if (hasMeasuredAiVisibility(b)) {
+          if (completeEvidence) {
             tr.addEventListener("click", () => {
               currentBusiness = b;
               renderDetailView(b, runDoc);
@@ -1322,8 +1329,8 @@
       // -----------------------------------------------------------
       document.getElementById("btnSendOutreach").addEventListener("click", async () => {
         if (!currentBusiness) return;
-        if (!hasMeasuredAiVisibility(currentBusiness)) {
-          alert("Outreach is unavailable until Goldmine has successfully measured AI visibility.");
+        if (!hasCompleteAiVisibility(currentBusiness)) {
+          alert("Outreach is available after all ten AI visibility queries complete.");
           return;
         }
         const btn = document.getElementById("btnSendOutreach");
@@ -1403,6 +1410,13 @@
       function hasMeasuredAiVisibility(business) {
         const queries = Array.isArray(business?.ai?.queries) ? business.ai.queries : [];
         return Number(business?.ai?.total || 0) > 0 && queries.some((query) => query?.status === "tested");
+      }
+
+      function hasCompleteAiVisibility(business) {
+        const queries = Array.isArray(business?.ai?.queries) ? business.ai.queries : [];
+        return queries.length === 10
+          && Number(business?.ai?.total || 0) === 10
+          && queries.every((query) => query?.status === "tested");
       }
 
       // Initialize on load

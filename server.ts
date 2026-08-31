@@ -18,6 +18,7 @@ app.use(express.json({ limit: "10mb" }));
 const MODEL = process.env.GEMINI_MODEL || "gemini-3.7-flash";
 const FALLBACK_MODELS = [MODEL, "gemini-3.7-flash", "gemini-3.1-flash-lite", "gemini-flash-latest"];
 const CUSTOMER_QUERY_COUNT = 10;
+const QUERY_SET_VERSION = 3;
 const MAX_AUDIT_CANDIDATES = 10;
 // We inspect more than the ten businesses that receive a full audit so that a
 // chain exclusion does not leave a local market with an artificially tiny
@@ -35,6 +36,13 @@ function hasMeasuredAiVisibility(business: any): boolean {
   return Number(business?.ai?.total || 0) > 0
     && Array.isArray(business?.ai?.queries)
     && business.ai.queries.some((query: any) => query?.status === "tested");
+}
+
+function hasCompleteAiVisibility(business: any): boolean {
+  const queries = Array.isArray(business?.ai?.queries) ? business.ai.queries : [];
+  return queries.length === CUSTOMER_QUERY_COUNT
+    && queries.every((query: any) => query?.status === "tested")
+    && Number(business?.ai?.total || 0) === CUSTOMER_QUERY_COUNT;
 }
 const QUERY_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
 const firestoreProject = process.env.GOOGLE_CLOUD_PROJECT || process.env.GCLOUD_PROJECT;
@@ -825,11 +833,11 @@ function computeOpportunityValueEstimate(
 }
 
 function querySetKey(category: string, locality: string): string {
-  return crypto.createHash("sha256").update(`v2|${category.toLowerCase().trim()}|${locality.toLowerCase().trim()}`).digest("hex");
+  return crypto.createHash("sha256").update(`v${QUERY_SET_VERSION}|${category.toLowerCase().trim()}|${locality.toLowerCase().trim()}`).digest("hex");
 }
 
 async function dbGetQuerySet(category: string, locality: string): Promise<string[] | null> {
-  const key = `v2_${category.toLowerCase().trim()}_${locality.toLowerCase().trim()}`;
+  const key = `v${QUERY_SET_VERSION}_${category.toLowerCase().trim()}_${locality.toLowerCase().trim()}`;
   const found = store.query_sets[key];
   if (found && Array.isArray(found.queries) && found.queries.length > 0) {
     return found.queries;
@@ -844,7 +852,7 @@ async function dbGetQuerySet(category: string, locality: string): Promise<string
 }
 
 async function dbSaveQuerySet(category: string, locality: string, queries: string[]) {
-  const key = `v2_${category.toLowerCase().trim()}_${locality.toLowerCase().trim()}`;
+  const key = `v${QUERY_SET_VERSION}_${category.toLowerCase().trim()}_${locality.toLowerCase().trim()}`;
   const data = {
     queries,
     category,
@@ -1347,9 +1355,15 @@ async function verifyMultiLocationBrands(businesses: any[], location: string) {
         ...(business.discovery || {}),
         brand_check_market: parentMarket,
         brand_check_locations: locationCount,
-        brand_check_status: "verified",
+        brand_check_status: locationCount === 0 ? "unverified" : "verified",
       };
-      if (locationCount > 1) {
+      if (locationCount === 0) {
+        // A failed name match is not proof of independence. Keep the prospect
+        // out of outreach until a later, stronger verification source can
+        // identify the brand safely.
+        business.discovery.outreach_eligible = false;
+        business.discovery.exclusion_reason = "Goldmine could not verify this business as a single-location independent brand.";
+      } else if (locationCount > 1) {
         business.discovery.outreach_eligible = false;
         business.discovery.brand_group_size = Math.max(Number(business.discovery.brand_group_size || 1), locationCount);
         business.discovery.exclusion_reason = `Google Places found ${locationCount} locations for this brand in ${parentMarket}.`;
@@ -1718,18 +1732,73 @@ async function getOrGenerateQueries(category: string, locality: string): Promise
   // model-invented prompts. This removes a second Gemini request, makes scans
   // comparable over time, and preserves exactly ten queries for every scan.
   const categoryLabel = category.toLowerCase();
-  const queries = [
-    `best ${categoryLabel} in ${locality}`,
-    `top rated ${categoryLabel} near me in ${locality}`,
-    `recommended ${categoryLabel} in ${locality}`,
-    `affordable ${categoryLabel} in ${locality}`,
-    `trusted ${categoryLabel} in ${locality}`,
-    `family friendly ${categoryLabel} in ${locality}`,
-    `date night ${categoryLabel} in ${locality}`,
-    `${categoryLabel} open now in ${locality}`,
-    `local ${categoryLabel} in ${locality}`,
-    `where should I go for ${categoryLabel} in ${locality}`,
-  ];
+  let queries: string[];
+  if (categoryLabel.includes("veterinary")) {
+    queries = [
+      `best vets in ${locality}`,
+      `top rated veterinary clinic near me in ${locality}`,
+      `recommended independent vet in ${locality}`,
+      `affordable vet in ${locality}`,
+      `trusted local vet in ${locality}`,
+      `emergency vet in ${locality}`,
+      `same day vet appointment in ${locality}`,
+      `vet open now in ${locality}`,
+      `cat vet in ${locality}`,
+      `dog vet in ${locality}`,
+    ];
+  } else if (categoryLabel.includes("healthcare") || categoryLabel.includes("clinic")) {
+    queries = [
+      `best private healthcare clinic in ${locality}`,
+      `top rated private clinic near me in ${locality}`,
+      `recommended private healthcare in ${locality}`,
+      `trusted local private clinic in ${locality}`,
+      `private healthcare appointment in ${locality}`,
+      `same day private clinic in ${locality}`,
+      `affordable private healthcare in ${locality}`,
+      `specialist private clinic in ${locality}`,
+      `private clinic open now in ${locality}`,
+      `where should I go for private healthcare in ${locality}`,
+    ];
+  } else if (categoryLabel.includes("retail")) {
+    queries = [
+      `best local shops in ${locality}`,
+      `top rated independent shops near me in ${locality}`,
+      `recommended shops in ${locality}`,
+      `independent retailers in ${locality}`,
+      `affordable local shops in ${locality}`,
+      `trusted shops in ${locality}`,
+      `gift shops in ${locality}`,
+      `shops open now in ${locality}`,
+      `where to shop locally in ${locality}`,
+      `local businesses to visit in ${locality}`,
+    ];
+  } else if (categoryLabel.includes("restaurant") || categoryLabel.includes("café") || categoryLabel.includes("cafe")) {
+    queries = [
+      `best ${categoryLabel} in ${locality}`,
+      `top rated ${categoryLabel} near me in ${locality}`,
+      `recommended ${categoryLabel} in ${locality}`,
+      `affordable ${categoryLabel} in ${locality}`,
+      `trusted ${categoryLabel} in ${locality}`,
+      `family friendly ${categoryLabel} in ${locality}`,
+      `date night ${categoryLabel} in ${locality}`,
+      `${categoryLabel} open now in ${locality}`,
+      `local ${categoryLabel} in ${locality}`,
+      `where should I go for ${categoryLabel} in ${locality}`,
+    ];
+  } else {
+    queries = [
+      `best ${categoryLabel} in ${locality}`,
+      `top rated ${categoryLabel} near me in ${locality}`,
+      `recommended ${categoryLabel} in ${locality}`,
+      `independent ${categoryLabel} in ${locality}`,
+      `trusted ${categoryLabel} in ${locality}`,
+      `affordable ${categoryLabel} in ${locality}`,
+      `local ${categoryLabel} in ${locality}`,
+      `${categoryLabel} open now in ${locality}`,
+      `quality ${categoryLabel} in ${locality}`,
+      `where should I go for ${categoryLabel} in ${locality}`,
+    ];
+  }
   await dbSaveQuerySet(category, locality, queries);
   return queries;
 }
@@ -2324,8 +2393,8 @@ async function runDiscoveryPipeline(
       const siteHealth = b.site.no_website
         ? 0
         : Math.round(((b.site.performance || 0) + (b.site.seo || 0)) / 2);
-      const aiMeasured = hasMeasuredAiVisibility(b);
-      const visibilityScore = aiMeasured
+      const aiComplete = hasCompleteAiVisibility(b);
+      const visibilityScore = aiComplete
         ? Math.round(0.7 * b.ai.visibility + 0.3 * siteHealth)
         : null;
       const goldScore = visibilityScore === null
@@ -2335,7 +2404,7 @@ async function runDiscoveryPipeline(
       b.site_health = siteHealth;
       b.visibility_score = visibilityScore;
       b.gold_score = goldScore;
-      b.score_status = aiMeasured ? "measured" : "unmeasured";
+      b.score_status = aiComplete ? "measured" : (hasMeasuredAiVisibility(b) ? "partial" : "unmeasured");
 
       // Deterministic service mapping
       const { service } = determineServiceRecommendation(b, services);
@@ -2343,7 +2412,7 @@ async function runDiscoveryPipeline(
       b.service_rationale = generateDefaultRationale(b, service);
 
       // Value estimate calculation
-      b.value_estimate = computeOpportunityValueEstimate(b, category, options);
+      b.value_estimate = aiComplete ? computeOpportunityValueEstimate(b, category, options) : null;
     }
 
     // Keep deterministic service rationales. The visibility evidence is the
@@ -2351,8 +2420,8 @@ async function runDiscoveryPipeline(
 
     // Sort descending by gold_score
     top20.sort((a, b) => {
-      const aMeasured = hasMeasuredAiVisibility(a);
-      const bMeasured = hasMeasuredAiVisibility(b);
+      const aMeasured = hasCompleteAiVisibility(a);
+      const bMeasured = hasCompleteAiVisibility(b);
       if (aMeasured !== bMeasured) return aMeasured ? -1 : 1;
       if (aMeasured && b.gold_score !== a.gold_score) {
         return Number(b.gold_score) - Number(a.gold_score);
@@ -2565,8 +2634,8 @@ app.post("/api/outreach/:placeId", async (req: Request, res: Response) => {
     return;
   }
 
-  if (!hasMeasuredAiVisibility(business)) {
-    res.status(422).json({ error: "Outreach is unavailable because AI visibility was not measured for this business." });
+  if (!hasCompleteAiVisibility(business)) {
+    res.status(422).json({ error: "Outreach is unavailable until all ten AI visibility queries have completed." });
     return;
   }
 
